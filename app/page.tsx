@@ -1,68 +1,72 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState } from 'react';
+import { useApp } from '@/context/AppContext';
+import { Navbar } from '@/components/layout/Navbar';
+import { LoginPage } from '@/components/auth/LoginPage';
+import { HodDashboard } from '@/components/modules/hod/HodDashboard';
+import { LogisticsDashboard } from '@/components/modules/logistics/LogisticsDashboard';
+import { FinanceDashboard } from '@/components/modules/finance/FinanceDashboard';
+import { PmDashboard } from '@/components/modules/pm/PmDashboard';
 
 export default function Home() {
+  const { currentUser, activeRole } = useApp();
+  const [activeModuleTab, setActiveModuleTab] = useState<string>('overview');
+
+  // If user is not logged in, display the username/password Login Page
+  if (!currentUser) {
+    return <LoginPage />;
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+    <div className="min-h-screen flex flex-col bg-[#f8fafc] dark:bg-[#0c0e12] text-zinc-900 dark:text-zinc-100 transition-colors">
+      {/* Top Header Navigation Bar */}
+      <Navbar />
+
+      {/* Main Spacious Workspace Container */}
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {activeRole === 'hod' && (
+          <HodDashboard
+            activeTab={activeModuleTab}
+            onTabChange={setActiveModuleTab}
+          />
+        )}
+
+        {activeRole === 'admin_logistics' && (
+          <LogisticsDashboard
+            activeTab={activeModuleTab as any}
+            onTabChange={setActiveModuleTab as any}
+          />
+        )}
+
+        {activeRole === 'admin_finance' && (
+          <FinanceDashboard
+            activeTab={activeModuleTab as any}
+            onTabChange={setActiveModuleTab as any}
+          />
+        )}
+
+        {activeRole === 'project_manager' && (
+          <PmDashboard
+            activeTab={activeModuleTab as any}
+            onTabChange={setActiveModuleTab as any}
+          />
+        )}
+
+        {/* Clean Modern Footer */}
+        <footer className="mt-16 pt-6 border-t border-zinc-200 dark:border-[#232830] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+          <div>
+            &copy; 2026 <strong className="text-zinc-800 dark:text-zinc-200">PT Sumber Mineral Abadi</strong> &bull; PAM Mineral Group
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>PostgreSQL Live</span>
+            </span>
+            <span>&bull;</span>
+            <span>Mining Procurement Portal</span>
+          </div>
+        </footer>
       </main>
     </div>
   );
