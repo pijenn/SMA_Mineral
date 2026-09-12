@@ -2,11 +2,13 @@
 
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
+import { isAllDepartments } from '@/lib/utils';
 import { X, Tag, PlusCircle } from 'lucide-react';
 
 export function RoutineCatalogModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { currentUser, selectedDepartmentId, departments, addRoutineItem } = useApp();
-  const activeDeptId = currentUser?.department_id || selectedDepartmentId;
+  const isAll = isAllDepartments(selectedDepartmentId);
+  const activeDeptId = currentUser?.department_id || (!isAll ? selectedDepartmentId : (departments[0]?.id || ''));
   const currentDept = departments.find((d) => d.id === activeDeptId);
 
   const [itemCode, setItemCode] = useState(`R-${currentDept?.code || 'GEN'}-${String(Math.floor(Math.random() * 900) + 100)}`);

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import { RequestModal } from './RequestModal';
@@ -44,7 +44,8 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
-  const activeDeptId = currentUser?.department_id || selectedDepartmentId;
+  const isAll = isAllDepartments(selectedDepartmentId);
+  const activeDeptId = currentUser?.department_id || (!isAll ? selectedDepartmentId : (departments[0]?.id || ''));
   const currentDept = departments.find((d) => d.id === activeDeptId);
   const deptItems = requestItems.filter((item) => item.department_id === activeDeptId);
   const deptRoutineCatalog = routineItems.filter((r) => r.department_id === activeDeptId);

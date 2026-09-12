@@ -3,10 +3,11 @@
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ProcurementRequestItem, PriorityLevel } from '@/lib/types';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import { UserManagementModal } from './UserManagementModal';
+import { generateWeeklyReportPdf } from '@/lib/pdfGenerator';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -22,6 +23,11 @@ import {
   Sparkles,
   Users,
   Wallet,
+  Download,
+  FileText,
+  Printer,
+  Building2,
+  Receipt,
 } from 'lucide-react';
 
 interface PmDashboardProps {
@@ -32,6 +38,9 @@ interface PmDashboardProps {
 export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDashboardProps) {
   const {
     activePeriod,
+    selectedDepartmentId,
+    departments,
+    currentUser,
     requestItems,
     routineItems,
     transactions,
@@ -51,6 +60,7 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
   const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'item' | 'buy' } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Total metrics
   const totalDisbursed = activePeriod.disbursed_budget;
@@ -59,16 +69,60 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
   const remainingCash = totalAvailable - totalSpent;
   const isSurplus = remainingCash >= 0;
 
+  // Filter purchased items for reports
+  const purchasedItems = requestItems.filter((item) => {
+    const isPurchasedStatus =
+      item.lifecycle_status === 'purchased' ||
+      item.lifecycle_status === 'processing_delivery' ||
+      item.lifecycle_status === 'in_transit' ||
+      item.lifecycle_status === 'received_at_site';
+    const hasDelivery = item.delivery_status && item.delivery_status !== 'none';
+    return isPurchasedStatus || hasDelivery;
+  });
+
+  const displayPurchasedItems =
+    purchasedItems.length > 0
+      ? purchasedItems
+      : requestItems.filter(
+          (item) => item.pm_buy_approval === 'approved' || item.lifecycle_status === 'pm_buy_approved'
+        );
+
+  const handleDownloadPdf = () => {
+    try {
+      setIsGeneratingPdf(true);
+      generateWeeklyReportPdf({
+        period: activePeriod,
+        financeReport,
+        transactions,
+        requestItems,
+        routineItems,
+        departments,
+        currentUser,
+      });
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      alert('Terjadi kesalahan saat mencetak PDF laporan mingguan.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  // Department scope check
+  const isAllDept = isAllDepartments(selectedDepartmentId);
+  const deptItems = isAllDept
+    ? requestItems
+    : requestItems.filter((i) => i.department_id === selectedDepartmentId);
+
   // Queues
-  const pendingItemApprovals = requestItems.filter(
+  const pendingItemApprovals = deptItems.filter(
     (i) => i.lifecycle_status === 'validated' || (i.lifecycle_status === 'submitted' && i.pm_item_approval === 'pending')
   );
 
-  const pendingBuyApprovals = requestItems.filter(
+  const pendingBuyApprovals = deptItems.filter(
     (i) => i.lifecycle_status === 'finance_budgeted' || (i.pm_item_approval === 'approved' && i.pm_buy_approval === 'pending')
   );
 
-  const backlogItems = requestItems.filter(
+  const backlogItems = deptItems.filter(
     (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week' || i.is_rollover
   );
 
@@ -109,7 +163,17 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
         </div>
 
         {/* Top Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPdf}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            title="Unduh Laporan Mingguan & Invoice Pengadaan (PDF)"
+          >
+            <Download className="w-4 h-4" />
+            <span>{isGeneratingPdf ? 'Mencetak PDF...' : 'Unduh PDF Laporan'}</span>
+          </button>
+
           <button
             onClick={() => setIsUserMgmtOpen(true)}
             className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
@@ -507,42 +571,286 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
 
       {/* Tab: Sign-Off Laporan Mingguan */}
       {currentTab === 'final_report' && (
-        <div className="p-6 bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] space-y-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-              Sign-Off Laporan Keuangan & Pengadaan
-            </h2>
-            <span
-              className={`px-3 py-1 rounded-full text-xs font-bold ${
-                financeReport.status === 'approved_by_pm'
-                  ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-              }`}
-            >
-              Status: {financeReport.status.toUpperCase()}
-            </span>
+        <div className="space-y-6">
+          {/* Main Card Header & Action */}
+          <div className="p-5 sm:p-6 bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <FileCheck className="w-5 h-5 text-emerald-500" />
+                <h2 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-white">
+                  Laporan Mingguan & Rekapitulasi Kas (Weekly Invoice)
+                </h2>
+                <span
+                  className={`px-3 py-0.5 rounded-full text-xs font-bold border ${
+                    financeReport.status === 'approved_by_pm'
+                      ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                      : financeReport.status === 'submitted_by_finance'
+                      ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+                      : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                  }`}
+                >
+                  {financeReport.status === 'approved_by_pm'
+                    ? 'DISETUJUI OLEH PM'
+                    : financeReport.status === 'submitted_by_finance'
+                    ? 'DIAJUKAN FINANCE'
+                    : 'DRAFT LAPORAN'}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Periode:{' '}
+                <strong className="text-zinc-800 dark:text-zinc-200">
+                  {activePeriod.period_name || `Minggu ke-${activePeriod.week_number} (${activePeriod.year})`}
+                </strong>{' '}
+                ({formatDate(activePeriod.start_date)} - {formatDate(activePeriod.end_date)})
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                <span>{isGeneratingPdf ? 'Mencetak PDF...' : 'Unduh PDF Laporan Mingguan'}</span>
+              </button>
+
+              {financeReport.status !== 'approved_by_pm' ? (
+                <button
+                  onClick={() => approveFinanceReportByPm('Disetujui dan diverifikasi oleh Project Manager')}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <FileCheck className="w-4 h-4" />
+                  <span>Otorisasi & Tanda Tangan PM</span>
+                </button>
+              ) : (
+                <span className="px-3.5 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-bold border border-emerald-500/20 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  <span>Telah Ditandatangani PM</span>
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2 text-xs">
-            <div>Total Pencairan: <strong>{formatCurrency(totalDisbursed)}</strong></div>
-            <div>Total Pengeluaran: <strong>{formatCurrency(totalSpent)}</strong></div>
-            <div>Sisa Saldo Kas: <strong>{formatCurrency(remainingCash)}</strong></div>
-            {financeReport.pm_approval_notes && (
-              <div className="text-zinc-500 pt-2">
-                Catatan: <em>&ldquo;{financeReport.pm_approval_notes}&rdquo;</em>
+          {/* 3-Column Financial & Surplus Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] shadow-xs">
+              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Total Kas Likuid Tersedia</div>
+              <div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-zinc-900 dark:text-white mt-1">
+                {formatCurrency(totalAvailable)}
+              </div>
+              <div className="text-[11px] text-zinc-400 mt-2 space-y-0.5">
+                <div>Pencairan Kas: <strong>{formatCurrency(totalDisbursed)}</strong></div>
+                <div>Rollover Lalu: <strong>{formatCurrency(activePeriod.previous_rollover_balance)}</strong></div>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] shadow-xs">
+              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Grand Total Realisasi Belanja</div>
+              <div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-red-600 dark:text-red-400 mt-1">
+                {formatCurrency(totalSpent)}
+              </div>
+              <div className="text-[11px] text-zinc-400 mt-2 space-y-0.5">
+                <div>Terealisasi: <strong>{displayPurchasedItems.length} Item Barang</strong></div>
+                <div>Transaksi PO: <strong>{transactions.length} Faktur / Kuitansi</strong></div>
+              </div>
+            </div>
+
+            <div
+              className={`p-5 rounded-2xl border shadow-xs ${
+                isSurplus
+                  ? 'bg-emerald-500/5 dark:bg-emerald-950/10 border-emerald-500/30'
+                  : 'bg-red-500/5 dark:bg-red-950/10 border-red-500/30'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Sisa Saldo Kas (Surplus)</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    isSurplus
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                      : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
+                  }`}
+                >
+                  {isSurplus ? 'SURPLUS KAS' : 'DEFISIT KAS'}
+                </span>
+              </div>
+              <div
+                className={`text-xl sm:text-2xl font-bold font-mono tracking-tight mt-1 ${
+                  isSurplus ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+                }`}
+              >
+                {isSurplus ? `+ ${formatCurrency(remainingCash)}` : `- ${formatCurrency(Math.abs(remainingCash))}`}
+              </div>
+              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-2">
+                {isSurplus
+                  ? 'Sisa kas dapat di-rollover ke minggu depan atau dialokasikan untuk backlog permohonan.'
+                  : 'Pengeluaran melebihi kas tersedia, membutuhkan injeksi anggaran tambahan.'}
+              </div>
+            </div>
+          </div>
+
+          {/* Rincian Barang yang Dibeli (Invoice Itemized Table) */}
+          <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs">
+            <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-emerald-500" />
+                  <span>Rincian Barang Realisasi Pengadaan (Weekly Invoice Items)</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Daftar seluruh item yang dibeli beserta departemen pemohon, kuantitas, harga, dan subtotal yang masuk dalam faktur mingguan.
+                </p>
+              </div>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="px-3.5 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#1f242c] dark:hover:bg-[#282e38] text-zinc-800 dark:text-zinc-200 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Cetak Invoice PDF</span>
+              </button>
+            </div>
+
+            {displayPurchasedItems.length === 0 ? (
+              <div className="text-center py-16 px-4 text-xs text-zinc-400">
+                Belum ada data barang yang dibeli pada periode ini.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-zinc-50 dark:bg-[#0e1115] text-zinc-500 dark:text-zinc-400 uppercase text-[11px] font-bold border-b border-zinc-200 dark:border-[#232830]">
+                    <tr>
+                      <th className="py-3 px-4 w-12 text-center">No</th>
+                      <th className="py-3 px-4">Departemen Pemohon</th>
+                      <th className="py-3 px-4">Nama Barang & Spesifikasi</th>
+                      <th className="py-3 px-4 text-center">Qty</th>
+                      <th className="py-3 px-4 text-right">Harga Satuan</th>
+                      <th className="py-3 px-4 text-right">Subtotal</th>
+                      <th className="py-3 px-4 text-center">Status Pengiriman</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 dark:divide-[#232830]">
+                    {displayPurchasedItems.map((item, idx) => {
+                      const routine = routineItems.find((r) => r.id === item.routine_item_id);
+                      const itemName = item.custom_item_name || routine?.name || 'Barang Tambang';
+                      const subtotal = (item.quantity || 1) * (item.final_unit_price || 0);
+
+                      return (
+                        <tr key={item.id} className="hover:bg-zinc-50/60 dark:hover:bg-[#181c22] transition-colors">
+                          <td className="py-3.5 px-4 text-center font-mono text-zinc-400">
+                            {idx + 1}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                              [{item.department_code || 'DEPT'}] {item.department_name || 'Departemen'}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-bold text-zinc-900 dark:text-white">{itemName}</div>
+                            {item.specification && (
+                              <div className="text-[11px] text-zinc-400 mt-0.5">
+                                Spek: {item.specification}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-center font-bold text-zinc-800 dark:text-zinc-200">
+                            {item.quantity} {item.unit}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono text-zinc-600 dark:text-zinc-300">
+                            {formatCurrency(item.final_unit_price || 0)}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-zinc-900 dark:text-white">
+                            {formatCurrency(subtotal)}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            {item.delivery_status && item.delivery_status !== 'none' ? (
+                              <DeliveryBadge status={item.delivery_status} />
+                            ) : (
+                              <span className="text-[11px] text-zinc-400">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-zinc-50 dark:bg-[#0e1115] border-t-2 border-zinc-200 dark:border-[#232830] font-bold">
+                    <tr>
+                      <td colSpan={3} className="py-3.5 px-4 text-right uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                        Grand Total Realisasi Pengadaan:
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-bold text-zinc-800 dark:text-zinc-200">
+                        {displayPurchasedItems.reduce((acc, i) => acc + (i.quantity || 1), 0)} Unit
+                      </td>
+                      <td className="py-3.5 px-4"></td>
+                      <td className="py-3.5 px-4 text-right font-mono text-sm text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(totalSpent)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
           </div>
 
-          {financeReport.status !== 'approved_by_pm' && (
-            <button
-              onClick={() => approveFinanceReportByPm('Disetujui dan diverifikasi oleh Project Manager')}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
-            >
-              <FileCheck className="w-4 h-4" />
-              <span>Otorisasi & Tanda Tangani Laporan (PM Sign-off)</span>
-            </button>
+          {/* PO Transactions List (if transactions exist) */}
+          {transactions.length > 0 && (
+            <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs">
+              <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830]">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
+                  Daftar Transaksi PO & Kuitansi (Purchase Orders)
+                </h3>
+              </div>
+              <div className="divide-y divide-zinc-200 dark:divide-[#232830]">
+                {transactions.map((tx) => (
+                  <div key={tx.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div>
+                      <div className="font-bold font-mono text-zinc-900 dark:text-white">{tx.transaction_code}</div>
+                      <div className="text-zinc-500">
+                        Vendor: <strong>{tx.vendor_name}</strong> | Tanggal: {formatDate(tx.purchase_date)} | Metode: {tx.payment_method?.toUpperCase()}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-zinc-900 dark:text-white">{formatCurrency(tx.total_amount)}</div>
+                      <span className="text-[11px] text-zinc-400">{tx.proofs?.length || 0} Lampiran Kuitansi</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
+
+          {/* Sign-Off & Verification Notes */}
+          <div className="p-5 rounded-2xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              Otorisasi & Catatan Pengesahan
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="p-3 rounded-xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830]">
+                <div className="font-bold text-zinc-700 dark:text-zinc-300">Verifikator Finance:</div>
+                <div className="text-zinc-500 mt-1">Siti Nurhaliza, S.E. (Finance Supervisor)</div>
+                <div className="text-[11px] text-emerald-500 mt-1 font-semibold">Tervalidasi Sistem Finance</div>
+              </div>
+              <div className="p-3 rounded-xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830]">
+                <div className="font-bold text-zinc-700 dark:text-zinc-300">Otorisasi Project Manager:</div>
+                <div className="text-zinc-500 mt-1">{currentUser?.full_name || 'Bambang Wijaya, S.T.'} (Project Manager)</div>
+                <div className="text-[11px] mt-1 font-semibold">
+                  {financeReport.status === 'approved_by_pm' ? (
+                    <span className="text-emerald-500">Telah Ditandatangani & Diotorisasi</span>
+                  ) : (
+                    <span className="text-amber-500">Menunggu Tanda Tangan PM</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {financeReport.pm_approval_notes && (
+              <div className="text-xs text-zinc-500 pt-1">
+                Catatan PM: <em>&ldquo;{financeReport.pm_approval_notes}&rdquo;</em>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

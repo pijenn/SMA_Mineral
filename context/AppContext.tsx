@@ -109,6 +109,11 @@ interface AppContextType {
   ) => Promise<void>;
   confirmSiteReceipt: (itemId: string, notes?: string) => Promise<void>;
   deferItemDeficit: (itemId: string, reason: string) => Promise<void>;
+  updatePeriodCash: (updates: {
+    disbursed_budget?: number;
+    previous_rollover_balance?: number;
+    notes?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
   submitFinanceReport: (notes?: string) => Promise<void>;
   approveFinanceReportByPm: (notes?: string) => Promise<void>;
   markNotificationRead: (id: string) => void;
@@ -121,7 +126,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [activeRole, setActiveRole] = useState<UserRole>('project_manager');
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('00000000-0000-0000-0001-000000000005');
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('all');
   const [departments, setDepartments] = useState<Department[]>(INITIAL_DEPARTMENTS);
   const [activePeriod, setActivePeriod] = useState<ProcurementPeriod>(INITIAL_PERIOD);
   const [routineItems, setRoutineItems] = useState<RoutineItem[]>([]);
@@ -140,6 +145,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setActiveRole(parsed.role);
         if (parsed.department_id) {
           setSelectedDepartmentId(parsed.department_id);
+        } else {
+          setSelectedDepartmentId('all');
         }
       }
     } catch (e) {
@@ -153,6 +160,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveRole(currentUser.role);
       if (currentUser.department_id) {
         setSelectedDepartmentId(currentUser.department_id);
+      } else {
+        setSelectedDepartmentId('all');
       }
     }
   }, [currentUser]);
@@ -214,13 +223,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setRoutineItems(rData);
       }
 
-      // 5. Fetch Request Items
-      const { data: reqData } = await supabase
+      // 5. Fetch Request Items (with joined department, period, and routine details)
+      const { data: reqData, error: reqErr } = await supabase
         .from('procurement_request_items')
-        .select('*')
+        .select(`
+          *,
+          routine_item:routine_items(*),
+          request:procurement_requests(
+            id,
+            period_id,
+            department_id,
+            departments(id, code, name),
+            procurement_periods(id, period_name)
+          )
+        `)
         .order('created_at', { ascending: false });
+
       if (reqData && reqData.length > 0) {
-        setRequestItems(reqData);
+        const mapped: ProcurementRequestItem[] = reqData.map((row: any) => {
+          const unitPrice = row.final_unit_price || row.routine_item?.estimated_unit_price || 0;
+          const qty = row.quantity || 1;
+          return {
+            ...row,
+            department_id: row.request?.department_id || row.department_id,
+            department_name: row.request?.departments?.name || row.department_name,
+            department_code: row.request?.departments?.code || row.department_code,
+            period_name: row.request?.procurement_periods?.period_name || row.period_name,
+            custom_item_name: row.custom_item_name || row.routine_item?.name,
+            final_unit_price: unitPrice,
+            estimated_total_price: qty * unitPrice,
+          };
+        });
+        setRequestItems(mapped);
+      } else if (reqErr) {
+        console.warn('Procurement request items fetch warning:', reqErr);
       }
 
       // 6. Fetch Transactions & Proofs
@@ -340,6 +376,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveRole(userProfile.role);
       if (userProfile.department_id) {
         setSelectedDepartmentId(userProfile.department_id);
+      } else {
+        setSelectedDepartmentId('all');
       }
 
       // Save to localStorage
@@ -533,8 +571,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const submitRequestItems = async (newItemsData: Array<Partial<ProcurementRequestItem>>) => {
-    const dept = departments.find((d) => d.id === selectedDepartmentId);
+    const isAll = !selectedDepartmentId || selectedDepartmentId === 'all' || selectedDepartmentId === 'ALL';
+    const deptId = isAll ? (currentUser?.department_id || departments[0]?.id) : selectedDepartmentId;
+    const dept = departments.find((d) => d.id === deptId) || departments[0];
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
+
+    // 1. Ensure parent procurement_requests record exists
+    let reqRecordId = requestId;
+    try {
+      const { data: existingReq } = await supabase
+        .from('procurement_requests')
+        .select('id')
+        .eq('period_id', activePeriod.id)
+        .eq('department_id', deptId)
+        .maybeSingle();
+
+      if (existingReq) {
+        reqRecordId = existingReq.id;
+      } else {
+        const { data: newReq } = await supabase
+          .from('procurement_requests')
+          .insert({
+            id: reqRecordId,
+            period_id: activePeriod.id,
+            department_id: deptId,
+            status: 'submitted',
+          })
+          .select('id')
+          .single();
+        if (newReq) reqRecordId = newReq.id;
+      }
+    } catch (err) {
+      console.warn('Procurement request parent check warning:', err);
+    }
 
     const created: ProcurementRequestItem[] = newItemsData.map((item, idx) => {
       const routine = routineItems.find((r) => r.id === item.routine_item_id);
@@ -542,10 +611,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const qty = item.quantity || 1;
       return {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `item-${Date.now()}-${idx}`,
-        request_id: requestId,
+        request_id: reqRecordId,
         item_type: item.item_type || 'routine',
         routine_item_id: item.routine_item_id,
-        custom_item_name: item.custom_item_name,
+        custom_item_name: item.custom_item_name || routine?.name,
         specification: item.specification || routine?.specification || '',
         quantity: qty,
         unit: item.unit || routine?.unit || 'pcs',
@@ -557,7 +626,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         pm_buy_approval: 'pending',
         lifecycle_status: 'submitted',
         delivery_status: 'none',
-        department_id: selectedDepartmentId,
+        department_id: deptId,
         department_code: dept?.code || 'DEPT',
         department_name: dept?.name || 'Department',
         period_name: activePeriod.period_name,
@@ -568,7 +637,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setRequestItems((prev) => [...created, ...prev]);
 
     try {
-      await supabase.from('procurement_request_items').insert(created);
+      const dbPayload = created.map((item) => ({
+        id: item.id,
+        request_id: item.request_id,
+        item_type: item.item_type,
+        routine_item_id: item.routine_item_id || null,
+        custom_item_name: item.custom_item_name || null,
+        specification: item.specification || null,
+        quantity: item.quantity,
+        unit: item.unit,
+        priority_level: item.priority_level,
+        is_rollover: item.is_rollover || false,
+        origin_period_id: activePeriod.id,
+        final_unit_price: item.final_unit_price || 0,
+        lifecycle_status: 'submitted',
+        pm_item_approval: 'pending',
+        pm_buy_approval: 'pending',
+        delivery_status: 'none',
+      }));
+      await supabase.from('procurement_request_items').insert(dbPayload);
     } catch (err) {
       console.error('Supabase request items insert error:', err);
     }
@@ -816,6 +903,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updatePeriodCash = async (updates: {
+    disbursed_budget?: number;
+    previous_rollover_balance?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    const newDisbursed = updates.disbursed_budget !== undefined ? updates.disbursed_budget : activePeriod.disbursed_budget;
+    const newRollover = updates.previous_rollover_balance !== undefined ? updates.previous_rollover_balance : activePeriod.previous_rollover_balance;
+    const newNotes = updates.notes !== undefined ? updates.notes : (activePeriod.notes || '');
+
+    const updatedPeriod: ProcurementPeriod = {
+      ...activePeriod,
+      disbursed_budget: newDisbursed,
+      previous_rollover_balance: newRollover,
+      notes: newNotes,
+    };
+
+    // Optimistically update activePeriod
+    setActivePeriod(updatedPeriod);
+
+    try {
+      const { error } = await supabase
+        .from('procurement_periods')
+        .update({
+          disbursed_budget: newDisbursed,
+          previous_rollover_balance: newRollover,
+          notes: newNotes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', activePeriod.id);
+
+      if (error) {
+        console.error('Failed to update procurement period in Supabase:', error);
+        return { success: false, error: error.message };
+      }
+
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        title: 'Saldo Kas Operasional Diperbarui',
+        message: `Admin Finance memperbarui total kas periode ${activePeriod.period_name}: Kas Mingguan Rp ${newDisbursed.toLocaleString('id-ID')} + Rollover Rp ${newRollover.toLocaleString('id-ID')} (Total: Rp ${(newDisbursed + newRollover).toLocaleString('id-ID')}).`,
+        type: 'general',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Update period cash error:', err);
+      return { success: false, error: err?.message || 'Gagal menyimpan perubahan kas' };
+    }
+  };
+
   const submitFinanceReport = async (notes?: string) => {
     setFinanceReport((prev) => ({
       ...prev,
@@ -877,6 +1016,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updateDeliveryStatus,
         confirmSiteReceipt,
         deferItemDeficit,
+        updatePeriodCash,
         submitFinanceReport,
         approveFinanceReportByPm,
         markNotificationRead,

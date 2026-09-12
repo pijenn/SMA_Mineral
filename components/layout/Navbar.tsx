@@ -86,14 +86,15 @@ export function Navbar() {
           </div>
 
           {/* Center: Department Filter if PM / Logistics / Finance */}
+          {/* Center: Department Filter if PM / Logistics / Finance */}
           {(activeRole === 'project_manager' || activeRole === 'admin_logistics' || activeRole === 'admin_finance') && (
-            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#161a20] border border-zinc-200 dark:border-[#262c36]">
-              <Building2 className="w-3.5 h-3.5 text-zinc-400" />
-              <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400">Dept:</span>
+            <div className="hidden sm:flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#161a20] border border-zinc-200 dark:border-[#262c36]">
+              <Building2 className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 shrink-0">Dept:</span>
               <select
                 value={selectedDepartmentId}
                 onChange={(e) => setSelectedDepartmentId(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
+                className="bg-transparent text-xs font-semibold text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer max-w-[160px] md:max-w-none truncate"
               >
                 <option value="all">Semua Departemen (12 Dept)</option>
                 {departments.map((d) => (

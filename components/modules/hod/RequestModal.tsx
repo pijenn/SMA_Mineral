@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ItemCategoryType, PriorityLevel, RoutineItem } from '@/lib/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, isAllDepartments } from '@/lib/utils';
 import { X, Plus, Trash2, Tag, AlertTriangle, Sparkles } from 'lucide-react';
 
 interface RequestItemFormRow {
@@ -19,7 +19,8 @@ interface RequestItemFormRow {
 
 export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { currentUser, selectedDepartmentId, departments, routineItems, submitRequestItems } = useApp();
-  const activeDeptId = currentUser?.department_id || selectedDepartmentId;
+  const isAll = isAllDepartments(selectedDepartmentId);
+  const activeDeptId = currentUser?.department_id || (!isAll ? selectedDepartmentId : (departments[0]?.id || ''));
   const currentDept = departments.find((d) => d.id === activeDeptId);
   const deptRoutineItems = routineItems.filter((r) => r.department_id === activeDeptId && r.status === 'active');
 

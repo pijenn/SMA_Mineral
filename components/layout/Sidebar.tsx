@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Layers,
   Sparkles,
+  ClipboardList,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -59,6 +60,7 @@ export function Sidebar({
       case 'admin_finance':
         return [
           { id: 'budget', label: 'Saldo Kas & Likuiditas', icon: LayoutDashboard },
+          { id: 'requests', label: 'Monitoring Request Dept', icon: ClipboardList },
           { id: 'receipts', label: 'Verifikasi Kuitansi', icon: Receipt },
           { id: 'journals', label: 'Jurnal Akuntansi Otomatis', icon: DollarSign },
           { id: 'report', label: 'Laporan Rekap Mingguan', icon: FileText },
@@ -159,8 +161,8 @@ export function Sidebar({
             })}
           </div>
 
-          {/* Department Quick Filter for PM/Logistics */}
-          {(activeRole === 'project_manager' || activeRole === 'admin_logistics') && (
+          {/* Department Quick Filter for PM/Logistics/Finance */}
+          {(activeRole === 'project_manager' || activeRole === 'admin_logistics' || activeRole === 'admin_finance') && (
             <div className="p-4 mx-3 my-2 rounded-2xl bg-[#14181f] border border-[#232830]">
               <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-zinc-400" />
@@ -171,7 +173,7 @@ export function Sidebar({
                 onChange={(e) => setSelectedDepartmentId(e.target.value)}
                 className="w-full text-xs font-semibold bg-[#0d0f12] text-zinc-200 border border-[#2a313d] rounded-lg px-2.5 py-2 focus:outline-none focus:border-emerald-500 cursor-pointer"
               >
-                <option value="ALL">Semua 12 Departemen</option>
+                <option value="all">Semua Departemen (12 Dept)</option>
                 {departments.map((d) => (
                   <option key={d.id} value={d.id}>
                     [{d.code}] {d.name}

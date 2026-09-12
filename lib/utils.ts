@@ -6,6 +6,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function isAllDepartments(deptId?: string | null): boolean {
+  if (!deptId) return true;
+  const lower = deptId.trim().toLowerCase();
+  return lower === 'all' || lower === 'semua' || lower === '';
+}
+
 export function formatCurrency(amount: number | null | undefined): string {
   if (amount === null || amount === undefined || isNaN(amount)) return 'Rp 0';
   return new Intl.NumberFormat('id-ID', {

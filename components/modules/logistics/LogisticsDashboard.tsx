@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ProcurementRequestItem, PriorityLevel, DeliveryStatusType } from '@/lib/types';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import {
@@ -77,11 +77,20 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [newDeliveryStatus, setNewDeliveryStatus] = useState<DeliveryStatusType>('in_transit');
   const [deliveryEta, setDeliveryEta] = useState('2026-09-06');
 
+  // Department scope check
+  const isAllDept = isAllDepartments(selectedDepartmentId);
+  const deptItems = isAllDept
+    ? requestItems
+    : requestItems.filter((i) => i.department_id === selectedDepartmentId);
+
   // Metrics
-  const validatedCount = requestItems.filter((i) => i.lifecycle_status === 'validated').length;
-  const readyToBuyCount = requestItems.filter((i) => i.lifecycle_status === 'pm_buy_approved').length;
-  const inTransitCount = requestItems.filter((i) => i.delivery_status === 'in_transit').length;
-  const completedCount = requestItems.filter((i) => i.lifecycle_status === 'received_at_site').length;
+  const validatedCount = deptItems.filter((i) => i.lifecycle_status === 'validated').length;
+  const readyToBuyCount = deptItems.filter((i) => i.lifecycle_status === 'pm_buy_approved').length;
+  const inTransitCount = deptItems.filter((i) => i.delivery_status === 'in_transit').length;
+  const completedCount = deptItems.filter((i) => i.lifecycle_status === 'received_at_site').length;
+  const backlogCount = deptItems.filter(
+    (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week' || i.is_rollover
+  ).length;
 
   // Filters
   const filteredItems = requestItems.filter((item) => {
@@ -94,7 +103,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
       itemCode.includes(searchQuery.toLowerCase()) ||
       deptName.includes(searchQuery.toLowerCase());
 
-    const matchesDept = selectedDepartmentId === 'ALL' || item.department_id === selectedDepartmentId;
+    const matchesDept = isAllDept || item.department_id === selectedDepartmentId;
     const matchesPriority =
       selectedPriorityFilter === 'ALL' || String(item.priority_level) === selectedPriorityFilter;
 
@@ -288,7 +297,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                 : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
             }`}
           >
-            Pipeline Sourcing ({requestItems.length})
+            Pipeline Sourcing ({deptItems.length})
           </button>
           <button
             onClick={() => setTab('purchasing')}
@@ -318,7 +327,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                 : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
             }`}
           >
-            Tertunda / Defisit Kas
+            Tertunda / Defisit Kas ({backlogCount})
           </button>
         </div>
 
