@@ -17,6 +17,8 @@ import {
   ItemLifecycleStatus,
   DeliveryStatusType,
 } from '@/lib/types';
+import { EditableImportedItem } from '@/lib/excelParser';
+import { formatCurrency } from '@/lib/utils';
 
 // Initial Fallback / Seed Constants if database table is initially blank
 const INITIAL_DEPARTMENTS: Department[] = [
@@ -73,6 +75,7 @@ interface AppContextType {
   
   // Data
   departments: Department[];
+  periods: ProcurementPeriod[];
   activePeriod: ProcurementPeriod;
   routineItems: RoutineItem[];
   requestItems: ProcurementRequestItem[];
@@ -80,10 +83,14 @@ interface AppContextType {
   journalEntries: FinancialJournalEntry[];
   financeReport: FinanceWeeklyReport;
   notifications: AppNotification[];
+  isAppLoading: boolean;
   
   // Actions
   addRoutineItem: (item: Omit<RoutineItem, 'id' | 'created_at'>) => Promise<void>;
   submitRequestItems: (items: Array<Partial<ProcurementRequestItem>>) => Promise<void>;
+  batchUploadProcurementItems: (
+    items: EditableImportedItem[]
+  ) => Promise<{ success: boolean; count: number; error?: string }>;
   updateItemLogistics: (
     itemId: string,
     updates: {
@@ -116,6 +123,14 @@ interface AppContextType {
   }) => Promise<{ success: boolean; error?: string }>;
   submitFinanceReport: (notes?: string) => Promise<void>;
   approveFinanceReportByPm: (notes?: string) => Promise<void>;
+  switchPeriod: (periodId: string) => Promise<{ success: boolean; error?: string }>;
+  createAndSwitchPeriod: (params: {
+    year: number;
+    week_number: number;
+    period_name: string;
+    start_date: string;
+    end_date: string;
+  }) => Promise<{ success: boolean; error?: string }>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
 }
@@ -128,12 +143,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeRole, setActiveRole] = useState<UserRole>('project_manager');
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('all');
   const [departments, setDepartments] = useState<Department[]>(INITIAL_DEPARTMENTS);
+  const [periods, setPeriods] = useState<ProcurementPeriod[]>([INITIAL_PERIOD]);
   const [activePeriod, setActivePeriod] = useState<ProcurementPeriod>(INITIAL_PERIOD);
   const [routineItems, setRoutineItems] = useState<RoutineItem[]>([]);
+  const [allRequestItems, setAllRequestItems] = useState<ProcurementRequestItem[]>([]);
   const [requestItems, setRequestItems] = useState<ProcurementRequestItem[]>([]);
+  const [allTransactions, setAllTransactions] = useState<PurchaseTransaction[]>([]);
   const [transactions, setTransactions] = useState<PurchaseTransaction[]>([]);
   const [journalEntries, setJournalEntries] = useState<FinancialJournalEntry[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isAppLoading, setIsAppLoading] = useState<boolean>(false);
 
   // Restore saved session from localStorage
   useEffect(() => {
@@ -204,14 +223,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       // 3. Fetch Procurement Periods
-      const { data: periodData } = await supabase
+      const { data: periodList } = await supabase
         .from('procurement_periods')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (periodData) {
-        setActivePeriod(periodData);
+        .order('created_at', { ascending: false });
+      let currentActive = activePeriod;
+      if (periodList && periodList.length > 0) {
+        setPeriods(periodList);
+        currentActive = periodList[0];
+        setActivePeriod(currentActive);
       }
 
       // 4. Fetch Routine Items Catalog
@@ -243,8 +263,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const mapped: ProcurementRequestItem[] = reqData.map((row: any) => {
           const unitPrice = row.final_unit_price || row.routine_item?.estimated_unit_price || 0;
           const qty = row.quantity || 1;
+          const parentPeriodId = (row.origin_period_id || row.request?.period_id || currentActive.id) as string;
           return {
             ...row,
+            origin_period_id: parentPeriodId,
             department_id: row.request?.department_id || row.department_id,
             department_name: row.request?.departments?.name || row.department_name,
             department_code: row.request?.departments?.code || row.department_code,
@@ -254,7 +276,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             estimated_total_price: qty * unitPrice,
           };
         });
-        setRequestItems(mapped);
+        setAllRequestItems(mapped);
+        setRequestItems(mapped.filter((i) => i.origin_period_id === currentActive.id));
       } else if (reqErr) {
         console.warn('Procurement request items fetch warning:', reqErr);
       }
@@ -265,7 +288,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .select('*, proofs:purchase_proofs(*)')
         .order('purchase_date', { ascending: false });
       if (txData && txData.length > 0) {
-        setTransactions(txData);
+        setAllTransactions(txData);
+        setTransactions(txData.filter((t: any) => t.period_id === currentActive.id));
       }
 
       // 7. Fetch Journal Entries
@@ -293,6 +317,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Filter items and transactions dynamically when activePeriod changes
+  useEffect(() => {
+    if (activePeriod && activePeriod.id) {
+      setRequestItems(
+        allRequestItems.filter((i) => i.origin_period_id === activePeriod.id)
+      );
+      setTransactions(allTransactions.filter((t) => t.period_id === activePeriod.id));
+    }
+  }, [activePeriod.id, allRequestItems, allTransactions]);
 
   // Compute live financial totals
   const totalActualExpenditure = transactions.reduce((acc, t) => acc + t.total_amount, 0);
@@ -634,6 +668,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     });
 
+    setAllRequestItems((prev) => [...created, ...prev]);
     setRequestItems((prev) => [...created, ...prev]);
 
     try {
@@ -672,6 +707,306 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       created_at: new Date().toISOString(),
     };
     setNotifications((prev) => [notif, ...prev]);
+  };
+
+  const switchPeriod = async (periodId: string): Promise<{ success: boolean; error?: string }> => {
+    if (activeRole !== 'project_manager' && currentUser?.role !== 'project_manager') {
+      return { success: false, error: 'Hanya Project Manager yang berwenang beralih periode.' };
+    }
+    const target = periods.find((p) => p.id === periodId);
+    if (!target) return { success: false, error: 'Periode tidak ditemukan.' };
+
+    setIsAppLoading(true);
+    setActivePeriod(target);
+    setTimeout(() => {
+      setIsAppLoading(false);
+    }, 250);
+
+    const notif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      title: 'Periode Aktif Diubah',
+      message: `Project Manager beralih ke periode: ${target.period_name}.`,
+      type: 'general',
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    setNotifications((prev) => [notif, ...prev]);
+
+    return { success: true };
+  };
+
+  const createAndSwitchPeriod = async (params: {
+    year: number;
+    week_number: number;
+    period_name: string;
+    start_date: string;
+    end_date: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    if (activeRole !== 'project_manager' && currentUser?.role !== 'project_manager') {
+      return { success: false, error: 'Hanya Project Manager yang berwenang membuka periode baru.' };
+    }
+
+    try {
+      setIsAppLoading(true);
+
+      // 1. Calculate surplus from current active period:
+      const currentAvailable = activePeriod.disbursed_budget + activePeriod.previous_rollover_balance;
+      const currentSpent = allTransactions
+        .filter((t) => t.period_id === activePeriod.id)
+        .reduce((sum, t) => sum + t.total_amount, 0);
+      const surplus = Math.max(0, currentAvailable - currentSpent);
+
+      const newId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `period-${Date.now()}`;
+
+      const newPeriodPayload: ProcurementPeriod = {
+        id: newId,
+        year: params.year,
+        week_number: params.week_number,
+        period_name: params.period_name,
+        start_date: params.start_date,
+        end_date: params.end_date,
+        disbursed_budget: 0,
+        previous_rollover_balance: surplus,
+        status: 'submission_open',
+        notes: `Periode baru diaktifkan oleh Project Manager. Saldo awal dialihkan dari surplus periode sebelumnya (Rp ${surplus.toLocaleString('id-ID')}).`,
+      };
+
+      const { data, error } = await supabase
+        .from('procurement_periods')
+        .insert([newPeriodPayload])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Failed to insert new period in Supabase:', error);
+        setIsAppLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      const finalPeriod = data || newPeriodPayload;
+      setPeriods((prev) => [finalPeriod, ...prev]);
+      setActivePeriod(finalPeriod);
+
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        title: 'Periode Pengadaan Baru Diaktifkan',
+        message: `${params.period_name} telah diaktifkan oleh PM. Item pengadaan di-reset dan kas dimulai dari Rp 0 + Surplus (${formatCurrency(surplus)}).`,
+        type: 'general',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+
+      setIsAppLoading(false);
+      return { success: true };
+    } catch (err: any) {
+      setIsAppLoading(false);
+      return { success: false, error: err?.message || 'Gagal membuat periode baru.' };
+    }
+  };
+
+  const batchUploadProcurementItems = async (
+    items: EditableImportedItem[]
+  ): Promise<{ success: boolean; count: number; error?: string }> => {
+    if (!items || items.length === 0) {
+      return { success: false, count: 0, error: 'Tidak ada data item untuk di-upload.' };
+    }
+
+    try {
+      // 1. Group items by department_id
+      const deptIds = Array.from(new Set(items.map((i) => i.department_id)));
+      const deptReqMap: Record<string, string> = {};
+
+      for (const dId of deptIds) {
+        // Check if procurement_requests exists for this period & dept
+        const { data: existingReq } = await supabase
+          .from('procurement_requests')
+          .select('id')
+          .eq('period_id', activePeriod.id)
+          .eq('department_id', dId)
+          .maybeSingle();
+
+        if (existingReq) {
+          deptReqMap[dId] = existingReq.id;
+        } else {
+          const newReqId = typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `req-${Date.now()}-${dId.slice(0, 6)}`;
+          const { data: newReq, error: reqInsertErr } = await supabase
+            .from('procurement_requests')
+            .insert({
+              id: newReqId,
+              period_id: activePeriod.id,
+              department_id: dId,
+              status: 'submitted',
+            })
+            .select('id')
+            .single();
+
+          if (reqInsertErr) {
+            console.error('Error creating procurement request for dept', dId, reqInsertErr);
+          }
+          deptReqMap[dId] = newReq?.id || newReqId;
+        }
+      }
+
+      // 2. Resolve or create routine items
+      const routineItemsCreated: RoutineItem[] = [];
+      const routineCodeToItemMap: Record<string, RoutineItem> = {};
+
+      // Seed map with currently loaded routineItems
+      routineItems.forEach((r) => {
+        if (r.item_code) {
+          routineCodeToItemMap[r.item_code.trim().toUpperCase()] = r;
+        }
+      });
+
+      // Find any routine items that need resolving
+      for (const item of items) {
+        if (item.item_type === 'routine' && item.routine_code) {
+          const codeUpper = item.routine_code.trim().toUpperCase();
+          if (!routineCodeToItemMap[codeUpper]) {
+            // Check in DB
+            const { data: existingInDb } = await supabase
+              .from('routine_items')
+              .select('*')
+              .eq('item_code', codeUpper)
+              .maybeSingle();
+
+            if (existingInDb) {
+              routineCodeToItemMap[codeUpper] = existingInDb;
+            } else {
+              // Create new routine item in DB
+              const newRoutineId = typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `ri-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+              const routinePayload: RoutineItem = {
+                id: newRoutineId,
+                department_id: item.department_id,
+                item_code: codeUpper,
+                name: item.item_name,
+                specification: item.specification || '',
+                unit: item.unit || 'pcs',
+                estimated_unit_price: item.final_unit_price || 0,
+                status: 'active',
+                created_at: new Date().toISOString(),
+              };
+
+              const { data: insertedRoutine, error: routineInsertErr } = await supabase
+                .from('routine_items')
+                .insert([routinePayload])
+                .select()
+                .single();
+
+              if (routineInsertErr) {
+                console.warn('Routine item insert warning:', routineInsertErr);
+              }
+
+              const finalRoutine = insertedRoutine || routinePayload;
+              routineCodeToItemMap[codeUpper] = finalRoutine;
+              routineItemsCreated.push(finalRoutine);
+            }
+          }
+        }
+      }
+
+      // 3. Construct procurement_request_items payload
+      const createdRequestItems: ProcurementRequestItem[] = [];
+      const dbPayload = [];
+
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        const reqId = deptReqMap[item.department_id];
+        const dept = departments.find((d) => d.id === item.department_id);
+        const isRoutine = item.item_type === 'routine';
+        const codeUpper = (item.routine_code || '').trim().toUpperCase();
+        const routineObj = isRoutine ? routineCodeToItemMap[codeUpper] : undefined;
+
+        const itemId = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `item-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`;
+
+        const qty = item.quantity > 0 ? item.quantity : 1;
+        const unitPrice = item.final_unit_price || routineObj?.estimated_unit_price || 0;
+
+        const dbRow = {
+          id: itemId,
+          request_id: reqId,
+          item_type: item.item_type,
+          routine_item_id: isRoutine ? (routineObj?.id || null) : null,
+          custom_item_name: item.item_name,
+          specification: item.specification || null,
+          quantity: qty,
+          unit: item.unit || 'pcs',
+          priority_level: item.priority_level || 1,
+          is_rollover: false,
+          origin_period_id: activePeriod.id,
+          final_unit_price: unitPrice,
+          lifecycle_status: 'validated' as ItemLifecycleStatus,
+          pm_item_approval: 'pending' as const,
+          pm_buy_approval: 'pending' as const,
+          delivery_status: 'none' as const,
+        };
+
+        dbPayload.push(dbRow);
+
+        createdRequestItems.push({
+          ...dbRow,
+          routine_item_id: isRoutine ? (routineObj?.id || undefined) : undefined,
+          specification: item.specification || undefined,
+          estimated_total_price: qty * unitPrice,
+          routine_item: routineObj,
+          department_id: item.department_id,
+          department_code: dept?.code || item.department_code,
+          department_name: dept?.name || item.department_name,
+          period_name: activePeriod.period_name,
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      // 4. Batch insert into Supabase
+      const { error: batchInsertErr } = await supabase
+        .from('procurement_request_items')
+        .insert(dbPayload);
+
+      if (batchInsertErr) {
+        console.error('Supabase batch upload error:', batchInsertErr);
+        // Fallback: try inserting in smaller chunks of 50
+        if (dbPayload.length > 50) {
+          for (let i = 0; i < dbPayload.length; i += 50) {
+            const chunk = dbPayload.slice(i, i + 50);
+            await supabase.from('procurement_request_items').insert(chunk);
+          }
+        } else {
+          return { success: false, count: 0, error: batchInsertErr.message };
+        }
+      }
+
+      // 5. Update local React states
+      if (routineItemsCreated.length > 0) {
+        setRoutineItems((prev) => [...routineItemsCreated, ...prev]);
+      }
+      setAllRequestItems((prev) => [...createdRequestItems, ...prev]);
+      setRequestItems((prev) => [...createdRequestItems, ...prev]);
+
+      // 6. Push notification
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        title: 'Impor Excel Logistik Berhasil',
+        message: `${createdRequestItems.length} item logistik berhasil di-upload ke sistem untuk ${activePeriod.period_name}.`,
+        type: 'general',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+
+      return { success: true, count: createdRequestItems.length };
+    } catch (err: any) {
+      console.error('Batch upload exception:', err);
+      return { success: false, count: 0, error: err?.message || 'Gagal mengunggah item ke database.' };
+    }
   };
 
   const updateItemLogistics = async (
@@ -754,6 +1089,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       created_at: new Date().toISOString(),
     };
 
+    setAllTransactions((prev) => [newTx, ...prev]);
     setTransactions((prev) => [newTx, ...prev]);
 
     setRequestItems((prev) =>
@@ -999,6 +1335,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         selectedDepartmentId,
         setSelectedDepartmentId,
         departments,
+        periods,
         activePeriod,
         routineItems,
         requestItems,
@@ -1006,8 +1343,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         journalEntries,
         financeReport,
         notifications,
+        isAppLoading,
         addRoutineItem,
         submitRequestItems,
+        batchUploadProcurementItems,
         updateItemLogistics,
         approveItemByPm,
         approveBuyByPm,
@@ -1019,6 +1358,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updatePeriodCash,
         submitFinanceReport,
         approveFinanceReportByPm,
+        switchPeriod,
+        createAndSwitchPeriod,
         markNotificationRead,
         markAllNotificationsRead,
       }}

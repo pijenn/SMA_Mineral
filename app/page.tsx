@@ -8,10 +8,16 @@ import { HodDashboard } from '@/components/modules/hod/HodDashboard';
 import { LogisticsDashboard } from '@/components/modules/logistics/LogisticsDashboard';
 import { FinanceDashboard } from '@/components/modules/finance/FinanceDashboard';
 import { PmDashboard } from '@/components/modules/pm/PmDashboard';
+import { LoadingScreen } from '@/components/ui/LoadingScreen';
 
 export default function Home() {
-  const { currentUser, activeRole } = useApp();
+  const { currentUser, activeRole, isAppLoading } = useApp();
   const [activeModuleTab, setActiveModuleTab] = useState<string>('overview');
+
+  // Loading Screen
+  if (isAppLoading) {
+    return <LoadingScreen message="Sinkronisasi Periode & Data Pengadaan..." />;
+  }
 
   // If user is not logged in, display the username/password Login Page
   if (!currentUser) {

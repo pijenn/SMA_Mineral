@@ -58,20 +58,12 @@ export function LoginPage() {
       <div className="w-full max-w-md space-y-6">
         {/* Company Header with Green Globe/Leaf icon */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 mb-1 shadow-sm">
-            <svg
-              className="w-8 h-8"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-              <path d="M2 12h20" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl overflow-hidden bg-white border border-zinc-200 dark:border-[#232830] mb-1 shadow-md p-1">
+            <img
+              src="/PT%20SMA%20LOGO.jpeg"
+              alt="PT Sumber Mineral Abadi"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-zinc-900 dark:text-white">

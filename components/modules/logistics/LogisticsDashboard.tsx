@@ -25,7 +25,9 @@ import {
   Plus,
   ShieldCheck,
   Receipt,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { ExcelImportModal } from './ExcelImportModal';
 
 interface LogisticsDashboardProps {
   activeTab?: 'pipeline' | 'purchasing' | 'delivery' | 'backlog';
@@ -59,6 +61,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   };
 
   // Modals state
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [sourcingItem, setSourcingItem] = useState<ProcurementRequestItem | null>(null);
   const [priceMin, setPriceMin] = useState<number>(0);
   const [priceMax, setPriceMax] = useState<number>(0);
@@ -219,6 +222,17 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
             Validasi harga pasar 3-vendor, eksekusi Purchase Order (PO), dan pelacakan ekspedisi ke site tambang.
           </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsImportModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Upload Excel Logistik</span>
+          </button>
         </div>
       </div>
 
@@ -750,6 +764,13 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
             </form>
           </div>
         </div>
+      )}
+      {/* Excel Import & Editable Review Modal */}
+      {isImportModalOpen && (
+        <ExcelImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+        />
       )}
     </div>
   );

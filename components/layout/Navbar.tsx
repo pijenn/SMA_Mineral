@@ -5,6 +5,7 @@ import { useApp } from '@/context/AppContext';
 import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/lib/utils';
 import { NotificationDrawer } from '@/components/ui/NotificationDrawer';
+import { PeriodChangeModal } from '@/components/modules/pm/PeriodChangeModal';
 import {
   Calendar,
   Bell,
@@ -29,6 +30,7 @@ export function Navbar() {
   const { theme, toggleTheme } = useTheme();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const userDept = departments.find((d) => d.id === currentUser?.department_id);
 
@@ -54,20 +56,12 @@ export function Navbar() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Left: Brand Logo & Title */}
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0 shadow-xs">
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                <path d="M2 12h20" />
-              </svg>
+            <div className="w-10 h-10 rounded-xl overflow-hidden bg-white border border-zinc-200 dark:border-[#232830] flex items-center justify-center shrink-0 shadow-xs p-1">
+              <img
+                src="/PT%20SMA%20LOGO.jpeg"
+                alt="PT Sumber Mineral Abadi"
+                className="w-full h-full object-contain"
+              />
             </div>
 
             <div>
@@ -108,17 +102,51 @@ export function Navbar() {
 
           {/* Right Tools: Active Period, Theme Switcher, Notifications, User Badge, Logout */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Active Period Card */}
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-[#161a20] border border-zinc-200 dark:border-[#262c36] text-xs">
-              <Calendar className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+            {/* Active Period Card (Interactive for PM Role) */}
+            <div
+              onClick={() => {
+                if (activeRole === 'project_manager') {
+                  setIsPeriodModalOpen(true);
+                }
+              }}
+              className={`hidden md:flex items-center gap-2.5 px-3 py-1.5 rounded-xl border text-xs transition-all ${
+                activeRole === 'project_manager'
+                  ? 'bg-zinc-100 hover:bg-purple-500/10 dark:bg-[#161a20] dark:hover:bg-purple-950/30 border-zinc-200 hover:border-purple-500/40 dark:border-[#262c36] cursor-pointer group shadow-xs'
+                  : 'bg-zinc-100 dark:bg-[#161a20] border-zinc-200 dark:border-[#262c36] cursor-default'
+              }`}
+              title={
+                activeRole === 'project_manager'
+                  ? 'Klik untuk mengubah atau membuka siklus periode baru (Khusus PM)'
+                  : activePeriod.period_name
+              }
+            >
+              <div
+                className={`p-1.5 rounded-lg transition-transform ${
+                  activeRole === 'project_manager'
+                    ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 group-hover:scale-110'
+                    : 'text-amber-500'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+              </div>
               <div className="text-left">
-                <div className="font-bold text-zinc-800 dark:text-zinc-200 text-[11px] leading-tight">
-                  {activePeriod.period_name}
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-zinc-800 dark:text-zinc-200 text-[11px] leading-tight">
+                    {activePeriod.period_name}
+                  </span>
+                  {activeRole === 'project_manager' && (
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-purple-600 text-white uppercase tracking-wider">
+                      Ubah
+                    </span>
+                  )}
                 </div>
                 <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
-                  Kas: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{formatCurrency(activePeriod.disbursed_budget)}</span>
+                  Kas: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{formatCurrency(activePeriod.disbursed_budget + activePeriod.previous_rollover_balance)}</span>
                 </div>
               </div>
+              {activeRole === 'project_manager' && (
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-purple-500 transition-colors ml-0.5" />
+              )}
             </div>
 
             {/* Light / Dark Mode Toggle */}
@@ -184,6 +212,14 @@ export function Navbar() {
 
       {/* Notification Drawer */}
       <NotificationDrawer isOpen={isNotifOpen} onClose={() => setIsNotifOpen(false)} />
+
+      {/* Period Change Modal (PM Only) */}
+      {isPeriodModalOpen && (
+        <PeriodChangeModal
+          isOpen={isPeriodModalOpen}
+          onClose={() => setIsPeriodModalOpen(false)}
+        />
+      )}
     </>
   );
 }
