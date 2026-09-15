@@ -68,8 +68,8 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
 
   // Edit Cash Modal States
   const [isEditCashModalOpen, setIsEditCashModalOpen] = useState(false);
-  const [cashDisbursedInput, setCashDisbursedInput] = useState<number>(activePeriod.disbursed_budget);
-  const [cashRolloverInput, setCashRolloverInput] = useState<number>(activePeriod.previous_rollover_balance);
+  const [cashDisbursedInput, setCashDisbursedInput] = useState<string>(String(activePeriod.disbursed_budget || ''));
+  const [cashRolloverInput, setCashRolloverInput] = useState<string>(String(activePeriod.previous_rollover_balance || '0'));
   const [cashNotesInput, setCashNotesInput] = useState<string>(activePeriod.notes || '');
   const [isSavingCash, setIsSavingCash] = useState(false);
   const [cashFeedback, setCashFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -158,8 +158,8 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
   const urgentRequestsCount = deptScopeRequests.filter((i) => i.priority_level === 3).length;
 
   const handleOpenEditCash = () => {
-    setCashDisbursedInput(activePeriod.disbursed_budget);
-    setCashRolloverInput(activePeriod.previous_rollover_balance);
+    setCashDisbursedInput(String(activePeriod.disbursed_budget ?? ''));
+    setCashRolloverInput(String(activePeriod.previous_rollover_balance ?? '0'));
     setCashNotesInput(activePeriod.notes || '');
     setCashFeedback(null);
     setIsEditCashModalOpen(true);
@@ -933,15 +933,26 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                   </span>
                 </div>
                 <input
-                  type="number"
-                  min="0"
-                  step="1000000"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
                   value={cashDisbursedInput}
-                  onChange={(e) => setCashDisbursedInput(Number(e.target.value) || 0)}
-                  placeholder="Masukkan nominal kas mingguan (Rp)..."
+                  onChange={(e) => {
+                    const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                    setCashDisbursedInput(cleanVal);
+                  }}
+                  onKeyDown={(e) => {
+                    if (['.', ',', '-', '+', 'e', 'E'].includes(e.key)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  placeholder="Masukkan nominal kas spesifik (contoh: 15750000)..."
                   className="w-full p-3 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-sm font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   required
                 />
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1">
+                  * Bebas input nominal spesifik berapa saja (hanya angka 0-9, tanpa titik atau koma).
+                </p>
                 {/* Quick Presets */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   <span className="text-[10px] text-zinc-400 font-semibold mr-1">Preset Cepat:</span>
@@ -949,9 +960,9 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                     <button
                       key={preset}
                       type="button"
-                      onClick={() => setCashDisbursedInput(preset)}
+                      onClick={() => setCashDisbursedInput(String(preset))}
                       className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer ${
-                        cashDisbursedInput === preset
+                        Number(cashDisbursedInput) === preset
                           ? 'bg-emerald-500 text-slate-950 ring-1 ring-emerald-500'
                           : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-[#1f252e] dark:hover:bg-[#28313e] text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-[#2d3644]'
                       }`}
@@ -974,17 +985,25 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                 </div>
                 <div className="flex items-center gap-2">
                   <input
-                    type="number"
-                    min="0"
-                    step="500000"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
                     value={cashRolloverInput}
-                    onChange={(e) => setCashRolloverInput(Number(e.target.value) || 0)}
-                    placeholder="Masukkan saldo rollover (Rp)..."
+                    onChange={(e) => {
+                      const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                      setCashRolloverInput(cleanVal);
+                    }}
+                    onKeyDown={(e) => {
+                      if (['.', ',', '-', '+', 'e', 'E'].includes(e.key)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    placeholder="Masukkan saldo rollover (contoh: 2500000)..."
                     className="flex-1 p-2.5 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-sm font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   />
                   <button
                     type="button"
-                    onClick={() => setCashRolloverInput(0)}
+                    onClick={() => setCashRolloverInput('0')}
                     className="px-3 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#1f252e] dark:hover:bg-[#28313e] text-xs font-semibold text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-[#2d3644] cursor-pointer"
                   >
                     Nol-kan (0)
