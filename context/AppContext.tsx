@@ -22,18 +22,19 @@ import { formatCurrency } from '@/lib/utils';
 
 // Initial Fallback / Seed Constants if database table is initially blank
 const INITIAL_DEPARTMENTS: Department[] = [
-  { id: '00000000-0000-0000-0001-000000000001', code: 'MINING', name: 'Mining & Production Operations', description: 'Operasi penambangan nikel dan overburden' },
-  { id: '00000000-0000-0000-0001-000000000002', code: 'HAULING', name: 'Hauling & Ore Transport', description: 'Pengangkutan material dan logistik armada tambang' },
-  { id: '00000000-0000-0000-0001-000000000003', code: 'CRUSHING', name: 'Crushing & Screening Plant', description: 'Pengolahan dan pemecahan bijih nikel' },
-  { id: '00000000-0000-0000-0001-000000000004', code: 'MAINTENANCE', name: 'Heavy Equipment & Plant Maintenance', description: 'Perawatan alat berat excavator, dump truck, dan genset' },
-  { id: '00000000-0000-0000-0001-000000000005', code: 'HSE', name: 'Health, Safety & Environment (K3)', description: 'Keselamatan kerja tambang, APD, dan pengelolaan lingkungan' },
-  { id: '00000000-0000-0000-0001-000000000006', code: 'LOGISTICS', name: 'Supply Chain & Warehouse Site', description: 'Gudang site tambang dan ekspedisi logistik' },
-  { id: '00000000-0000-0000-0001-000000000007', code: 'FINANCE', name: 'Finance, Accounting & Tax', description: 'Pengelolaan anggaran kas mingguan dan kuitansi' },
-  { id: '00000000-0000-0000-0001-000000000008', code: 'HRGA', name: 'Human Resources & General Affairs', description: 'Personalia, mess tambang, konsumsi, dan umum' },
-  { id: '00000000-0000-0000-0001-000000000009', code: 'IT', name: 'IT Infrastructure & Telecommunications', description: 'Jaringan radio komunikasi tambang, internet, dan server' },
-  { id: '00000000-0000-0000-0001-000000000010', code: 'LAB', name: 'Quality Control & Assay Laboratory', description: 'Uji kadar nikel (Ni) dan sampling geologi' },
-  { id: '00000000-0000-0000-0001-000000000011', code: 'ENV', name: 'Environmental & Mine Reclamation', description: 'Reklamasi lahan bekas tambang dan sediment trap' },
-  { id: '00000000-0000-0000-0001-000000000012', code: 'SECURITY', name: 'Mine Security & Asset Protection', description: 'Pengamanan area konsesi tambang dan pos jaga' },
+  { id: '325fbac3-295b-46b7-b06f-da2c16bf8204', code: 'GEOLOGY', name: 'Geology & Exploration', description: 'Exploration, grade control, sampling, and surveying' },
+  { id: '81897f36-5651-4008-8369-0a6e59fb6093', code: 'PROCESSING', name: 'Ore Processing & Stockpile', description: 'Crushing, screening, stockpile management, and blending' },
+  { id: '4943b2f3-16bd-4022-ae0a-e6f361dee001', code: 'HAULING', name: 'Hauling & Transportation', description: 'Pengangkutan material dan logistik armada tambang' },
+  { id: 'cca03d07-f1d7-4450-9445-135275a26ca0', code: 'MAINTENANCE', name: 'Plant & Equipment Maintenance', description: 'Workshop, mechanical, electrical, and spare parts' },
+  { id: 'fa312f2e-612c-4f36-957d-612c3d4b5f97', code: 'HSE', name: 'Health, Safety & Environment', description: 'K3, environmental compliance, PPE, and emergency response' },
+  { id: 'a933ae0c-6748-491a-930c-5f1cda393d73', code: 'LOGISTICS', name: 'Logistics & Supply Chain', description: 'Warehouse, inventory, sourcing, and material delivery' },
+  { id: '0c1b39fb-9eeb-4d8d-8bf9-ba3740ff33a4', code: 'FINANCE', name: 'Finance & Accounting', description: 'Budgeting, disbursements, invoicing, and tax accounting' },
+  { id: '4768d320-0e9d-4a65-a742-97de51cab156', code: 'HRGA', name: 'HR & General Affairs', description: 'Personnel, camp management, catering, security, and facilities' },
+  { id: 'e85ab2e7-bb37-4a4a-a5fa-f32dbdb3d91b', code: 'LEGAL', name: 'Legal & External Relations', description: 'Permits, community relations (CSR), and regulatory compliance' },
+  { id: '0f022291-0155-42b9-81a2-a42ba40dcb20', code: 'ENG', name: 'Engineering', description: 'Mine planning, civil engineering, surveying, and design' },
+  { id: '2272d2c7-029a-441e-b45b-78ecc9a92c28', code: 'FOREST', name: 'Forestry', description: 'Ganis, tata batas hutan, and forestry compliance' },
+  { id: 'c5b63123-b3a5-4b39-909d-48a31f99b741', code: 'PROD', name: 'Mining & Operations', description: 'Site mining operations, heavy equipment, and extraction' },
+  { id: 'a66d13c6-4870-43fc-90ce-406a15d1efcd', code: 'CIVIL', name: 'Civil & Infrastructure', description: 'Jalan tambang, jembatan, drainase, dan fasilitas umum' },
 ];
 
 const INITIAL_PERIOD: ProcurementPeriod = {
@@ -944,6 +945,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           is_rollover: false,
           origin_period_id: activePeriod.id,
           final_unit_price: unitPrice,
+          reference_link: item.reference_link || null,
           lifecycle_status: 'validated' as ItemLifecycleStatus,
           pm_item_approval: 'pending' as const,
           pm_buy_approval: 'pending' as const,
@@ -954,6 +956,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         createdRequestItems.push({
           ...dbRow,
+          reference_link: item.reference_link || undefined,
           routine_item_id: isRoutine ? (routineObj?.id || undefined) : undefined,
           specification: item.specification || undefined,
           estimated_total_price: qty * unitPrice,

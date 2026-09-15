@@ -87,13 +87,18 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
     setIsProcessingFile(true);
     setUploadError(null);
     try {
-      const res = await fetch('/Data%20Logistik%20SMA.xlsx');
+      let res = await fetch('/DATABASE%20LOGISTIK%202026%20(1).xlsx');
+      let loadedFileName = 'DATABASE LOGISTIK 2026 (1).xlsx';
+      if (!res.ok) {
+        res = await fetch('/Data%20Logistik%20SMA.xlsx');
+        loadedFileName = 'Data Logistik SMA.xlsx';
+      }
       if (!res.ok) throw new Error('File contoh tidak ditemukan.');
       const buffer = await res.arrayBuffer();
-      await processExcelBuffer(buffer, 'Data Logistik SMA.xlsx');
+      await processExcelBuffer(buffer, loadedFileName);
     } catch (err: any) {
       console.error('Error loading sample file:', err);
-      setUploadError('Gagal memuat file contoh Data Logistik SMA.xlsx.');
+      setUploadError('Gagal memuat file dokumen internal logistik.');
     } finally {
       setIsProcessingFile(false);
     }
@@ -151,6 +156,7 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
       unit: 'pcs',
       priority_level: 1,
       final_unit_price: 0,
+      reference_link: '',
     };
     setItems((prev) => [newRow, ...prev]);
   };
@@ -190,7 +196,8 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
         item.item_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.specification.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.routine_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.department_name.toLowerCase().includes(searchQuery.toLowerCase());
+        item.department_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.reference_link && item.reference_link.toLowerCase().includes(searchQuery.toLowerCase()));
 
       const matchesDept =
         selectedDeptFilter === 'ALL' || item.department_id === selectedDeptFilter;
@@ -336,10 +343,10 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
                 </div>
                 <div>
                   <h5 className="text-xs font-bold text-zinc-900 dark:text-white">
-                    Gunakan File Dokumen Default
+                    Gunakan File Database Logistik 2026
                   </h5>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Buka dan proses langsung file berkas internal <strong>Data Logistik SMA.xlsx</strong> (150 item dari 8 departemen).
+                    Buka dan proses langsung file berkas <strong>DATABASE LOGISTIK 2026 (1).xlsx</strong> (597+ item dengan vendor & kode barang).
                   </p>
                 </div>
               </div>
@@ -357,7 +364,7 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
                 ) : (
                   <>
                     <FileSpreadsheet className="w-4 h-4" />
-                    <span>Buka Data Logistik SMA.xlsx</span>
+                    <span>Buka DATABASE LOGISTIK 2026 (1).xlsx</span>
                   </>
                 )}
               </button>
@@ -367,11 +374,17 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
             <div className="p-4 rounded-xl bg-zinc-100/70 dark:bg-[#101317] border border-zinc-200 dark:border-[#232830] text-xs text-zinc-600 dark:text-zinc-400 space-y-2">
               <div className="font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-emerald-500" />
-                <span>Aturan Pemetaan Departemen & Kategori:</span>
+                <span>Aturan Pemetaan Departemen & Kolom:</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
-                  <span className="font-semibold text-zinc-900 dark:text-white">EXPLORASI</span> &rarr; Geology
+                  <span className="font-semibold text-zinc-900 dark:text-white">EKSPLORASI</span> &rarr; Geology
+                </div>
+                <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
+                  <span className="font-semibold text-zinc-900 dark:text-white">SURVEY</span> &rarr; Engineering
+                </div>
+                <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
+                  <span className="font-semibold text-zinc-900 dark:text-white">CIVIL</span> &rarr; Civil & Infra
                 </div>
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
                   <span className="font-semibold text-zinc-900 dark:text-white">QAQC</span> &rarr; Processing
@@ -383,22 +396,22 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
                   <span className="font-semibold text-zinc-900 dark:text-white">MAINTENANCE</span> &rarr; Maintenance
                 </div>
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
-                  <span className="font-semibold text-zinc-900 dark:text-white">PRODUKSI</span> &rarr; Mining / Prod
+                  <span className="font-semibold text-zinc-900 dark:text-white">PRODUKSI</span> &rarr; Mining & Operasional
                 </div>
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
                   <span className="font-semibold text-zinc-900 dark:text-white">GANIS</span> &rarr; Forestry
                 </div>
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
-                  <span className="font-semibold text-zinc-900 dark:text-white">HRGA</span> &rarr; HRGA
+                  <span className="font-semibold text-zinc-900 dark:text-white">HCGA / HRGA</span> &rarr; HRGA
                 </div>
                 <div className="p-2 rounded-lg bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#20252e]">
                   <span className="font-semibold text-zinc-900 dark:text-white">HSE / OBAT</span> &rarr; HSE
                 </div>
               </div>
               <p className="text-[11px] text-zinc-500 pt-1">
-                &bull; Status Belanja <strong>BULANAN</strong> otomatis dikonversi menjadi tipe <strong>Routine</strong> (wajib kode rutin).<br />
-                &bull; Status Belanja <strong>KONDISIONAL</strong> otomatis dikonversi menjadi tipe <strong>Additional</strong>.<br />
-                &bull; Kategori C1 &rarr; Prioritas 1, C2 &rarr; Prioritas 2, C3 &rarr; Prioritas 3.
+                &bull; Kolom <strong>DAFTAR VENDOR</strong> otomatis disimpan ke field <strong>reference_link</strong>.<br />
+                &bull; Kolom <strong>KODE BARANG</strong> (misal: EXP-001) langsung dipetakan menjadi <strong>Kode Rutin</strong>.<br />
+                &bull; Status Belanja kosong dengan Kode Barang otomatis berstatus <strong>Routine (Bulanan)</strong>.
               </p>
             </div>
           </div>
@@ -568,19 +581,20 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
                 <thead className="sticky top-0 z-10 bg-zinc-100 dark:bg-[#161a21] border-b border-zinc-200 dark:border-[#232830] text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider text-[10px]">
                   <tr>
                     <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 w-40">Departemen</th>
-                    <th className="py-2.5 px-3 min-w-[200px]">Nama Barang</th>
-                    <th className="py-2.5 px-3 w-32">Status Belanja</th>
-                    <th className="py-2.5 px-3 w-36">
+                    <th className="py-2.5 px-3 w-36">Departemen</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Nama Barang</th>
+                    <th className="py-2.5 px-3 w-36">Daftar Vendor</th>
+                    <th className="py-2.5 px-3 w-28">Status Belanja</th>
+                    <th className="py-2.5 px-3 w-32">
                       Kode Rutin <span className="text-amber-500">*</span>
                     </th>
-                    <th className="py-2.5 px-3 min-w-[150px]">Spesifikasi</th>
-                    <th className="py-2.5 px-3 w-20">Jumlah</th>
-                    <th className="py-2.5 px-3 w-24">Satuan</th>
-                    <th className="py-2.5 px-3 w-28">Prioritas</th>
-                    <th className="py-2.5 px-3 w-32 text-right">Harga Satuan (Rp)</th>
-                    <th className="py-2.5 px-3 w-32 text-right">Total (Rp)</th>
-                    <th className="py-2.5 px-3 w-12 text-center">Hapus</th>
+                    <th className="py-2.5 px-3 min-w-[130px]">Spesifikasi</th>
+                    <th className="py-2.5 px-3 w-16">Jumlah</th>
+                    <th className="py-2.5 px-3 w-20">Satuan</th>
+                    <th className="py-2.5 px-3 w-24">Prioritas</th>
+                    <th className="py-2.5 px-3 w-28 text-right">Harga Satuan (Rp)</th>
+                    <th className="py-2.5 px-3 w-28 text-right">Total (Rp)</th>
+                    <th className="py-2.5 px-3 w-10 text-center">Hapus</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-[#1d222b]">
@@ -631,6 +645,19 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
                             placeholder="Nama barang..."
                             className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white font-semibold focus:outline-none focus:border-emerald-500"
                             required
+                          />
+                        </td>
+
+                        {/* Vendor (reference_link) */}
+                        <td className="py-2 px-2">
+                          <input
+                            type="text"
+                            value={item.reference_link || ''}
+                            onChange={(e) =>
+                              handleUpdateItem(item.tempId, 'reference_link', e.target.value)
+                            }
+                            placeholder="Vendor / Toko..."
+                            className="w-full px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-emerald-500 truncate"
                           />
                         </td>
 
@@ -782,7 +809,7 @@ export function ExcelImportModal({ isOpen, onClose }: ExcelImportModalProps) {
 
                   {paginatedItems.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="py-12 text-center text-zinc-400">
+                      <td colSpan={13} className="py-12 text-center text-zinc-400">
                         Tidak ada barang yang cocok dengan pencarian / filter.
                       </td>
                     </tr>

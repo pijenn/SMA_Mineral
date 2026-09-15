@@ -165,7 +165,10 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
 
   const handleOpenPurchase = (item: ProcurementRequestItem) => {
     setPurchaseModalItem(item);
-    setVendorName('PT Mitra Supplier Mining');
+    const defaultVendor = item.reference_link && !item.reference_link.startsWith('http')
+      ? item.reference_link
+      : 'PT Mitra Supplier Mining';
+    setVendorName(defaultVendor);
     setInvoiceNumber(`INV-${Date.now().toString().slice(-4)}`);
   };
 
@@ -444,15 +447,22 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
 
                     {item.reference_link && (
                       <div className="pt-1">
-                        <a
-                          href={item.reference_link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>Link Vendor / Marketplace</span>
-                        </a>
+                        {item.reference_link.startsWith('http') ? (
+                          <a
+                            href={item.reference_link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-blue-500 hover:underline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>Link Vendor / Marketplace</span>
+                          </a>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            <Building2 className="w-3 h-3" />
+                            <span>Vendor: {item.reference_link}</span>
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

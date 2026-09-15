@@ -16,30 +16,48 @@ export interface EditableImportedItem {
   unit: string;
   priority_level: PriorityLevel;
   final_unit_price: number;
+  reference_link?: string; // Mapped from DAFTAR VENDOR
 }
 
-// Normalized section mapping according to requirements
+// Normalized section and department code mapping
 export const SECTION_TO_DEPT_CODE: Record<string, string> = {
   explorasi: 'GEOLOGY',
   eksplorasi: 'GEOLOGY',
   geology: 'GEOLOGY',
+  geo: 'GEOLOGY',
+  exp: 'GEOLOGY',
+  survey: 'ENG',
+  sur: 'ENG',
   qaqc: 'PROCESSING',
   processing: 'PROCESSING',
   engineering: 'ENG',
   eng: 'ENG',
+  civil: 'CIVIL',
+  civ: 'CIVIL',
   maintanance: 'MAINTENANCE',
   maintenance: 'MAINTENANCE',
+  mnt: 'MAINTENANCE',
   produksi: 'PROD',
   prod: 'PROD',
+  pro: 'PROD',
   mining: 'PROD',
   ganis: 'FOREST',
+  gan: 'FOREST',
   forest: 'FOREST',
   forestry: 'FOREST',
   hrga: 'HRGA',
+  hcga: 'HRGA',
   hse: 'HSE',
   'obat-obatan': 'HSE',
   'obat obatan': 'HSE',
   obat: 'HSE',
+  logistics: 'LOGISTICS',
+  log: 'LOGISTICS',
+  finance: 'FINANCE',
+  fin: 'FINANCE',
+  legal: 'LEGAL',
+  hauling: 'HAULING',
+  port: 'PORT',
 };
 
 /**
@@ -49,6 +67,7 @@ export function resolveDepartment(
   rawSection: string,
   departments: Department[]
 ): Department | undefined {
+  if (!rawSection) return undefined;
   const cleanKey = rawSection.toLowerCase().replace(/[^a-z0-9\- ]/g, '').trim();
   const targetCode = SECTION_TO_DEPT_CODE[cleanKey] || SECTION_TO_DEPT_CODE[cleanKey.split(' ')[0]] || '';
 
@@ -72,6 +91,46 @@ export function resolveDepartment(
   });
 }
 
+interface ColumnHeaderMap {
+  rowIndex: number;
+  colNo: number;
+  colName: number;
+  colPrice: number;
+  colUnit: number;
+  colVendor: number;
+  colDept: number;
+  colKode: number;
+  colMinStock: number;
+  colStatus: number;
+}
+
+/**
+ * Checks whether rows follow the new flat columnar format (e.g. DATABASE LOGISTIK 2026 (1).xlsx)
+ */
+function detectColumnarHeader(rows: any[][]): ColumnHeaderMap | null {
+  for (let r = 0; r < Math.min(10, rows.length); r++) {
+    const row = (rows[r] || []).map((c) => String(c ?? '').trim().toUpperCase());
+    const hasItemName = row.some((c) => /NAMA\s*BARANG/i.test(c));
+    const hasDeptOrCode = row.some((c) => /DEPARTEMEN|KODE\s*BARANG/i.test(c));
+
+    if (hasItemName && hasDeptOrCode) {
+      return {
+        rowIndex: r,
+        colNo: row.findIndex((c) => /^NO\.?$/i.test(c)),
+        colName: row.findIndex((c) => /NAMA\s*BARANG/i.test(c)),
+        colPrice: row.findIndex((c) => /HARGA/i.test(c)),
+        colUnit: row.findIndex((c) => /^SATUAN/i.test(c)),
+        colVendor: row.findIndex((c) => /VENDOR/i.test(c)),
+        colDept: row.findIndex((c) => /DEPARTEMEN/i.test(c)),
+        colKode: row.findIndex((c) => /KODE/i.test(c)),
+        colMinStock: row.findIndex((c) => /STOCK/i.test(c)),
+        colStatus: row.findIndex((c) => /STATUS/i.test(c)),
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * Parse an Excel workbook buffer into editable item rows
  */
@@ -85,13 +144,87 @@ export function parseLogisticExcel(
 
   const worksheet = workbook.Sheets[firstSheetName];
   const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+  if (rows.length === 0) return [];
 
+  const parsedItems: EditableImportedItem[] = [];
+  const deptRoutineCounter: Record<string, number> = {};
+  const headerMap = detectColumnarHeader(rows);
+
+  // ==========================================
+  // FORMAT 1: Flat Columnar Format (DATABASE LOGISTIK 2026)
+  // ==========================================
+  if (headerMap) {
+    for (let r = headerMap.rowIndex + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length === 0) continue;
+
+      const rawItemName = headerMap.colName !== -1 ? String(row[headerMap.colName] ?? '').trim() : '';
+      if (!rawItemName) continue;
+
+      const rawNo = headerMap.colNo !== -1 && row[headerMap.colNo] !== undefined && row[headerMap.colNo] !== ''
+        ? String(row[headerMap.colNo]).trim()
+        : String(r - headerMap.rowIndex);
+
+      const rawDept = headerMap.colDept !== -1 ? String(row[headerMap.colDept] ?? '').trim() : '';
+      const rawVendor = headerMap.colVendor !== -1 ? String(row[headerMap.colVendor] ?? '').trim() : '';
+      const rawKode = headerMap.colKode !== -1 ? String(row[headerMap.colKode] ?? '').trim().toUpperCase() : '';
+      const rawPrice = headerMap.colPrice !== -1 ? row[headerMap.colPrice] : 0;
+      const rawUnit = headerMap.colUnit !== -1 ? String(row[headerMap.colUnit] ?? '').trim() : 'pcs';
+      const rawStatus = headerMap.colStatus !== -1 ? String(row[headerMap.colStatus] ?? '').trim().toUpperCase() : '';
+
+      // Resolve department
+      const fallbackDept = departments[0];
+      const assignedDept = (rawDept ? resolveDepartment(rawDept, departments) : undefined) || fallbackDept;
+      const deptCode = assignedDept?.code || 'DEPT';
+      const deptName = assignedDept?.name || rawDept || 'General';
+      const deptId = assignedDept?.id || '00000000-0000-0000-0001-000000000001';
+
+      // Item Type: If status explicitly mentions Kondisional/Additional -> 'additional', otherwise if routine code or default -> 'routine'
+      let itemType: ItemCategoryType = 'routine';
+      if (rawStatus.includes('KONDISIONAL') || rawStatus.includes('ADDITIONAL')) {
+        itemType = 'additional';
+      } else if (rawStatus.includes('BULANAN') || rawStatus.includes('ROUTINE')) {
+        itemType = 'routine';
+      } else {
+        itemType = rawKode ? 'routine' : 'additional';
+      }
+
+      // Routine Code
+      deptRoutineCounter[deptCode] = (deptRoutineCounter[deptCode] || 0) + 1;
+      const seqStr = String(deptRoutineCounter[deptCode]).padStart(3, '0');
+      const routineCode = rawKode || (itemType === 'routine' ? `R-${deptCode}-${seqStr}` : '');
+
+      // Price
+      const finalPrice = typeof rawPrice === 'number' ? rawPrice : Number(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
+      const unit = rawUnit || 'pcs';
+
+      parsedItems.push({
+        tempId: `import-${Date.now()}-${r}-${Math.random().toString(36).slice(2, 6)}`,
+        originalNo: rawNo,
+        department_id: deptId,
+        department_code: deptCode,
+        department_name: deptName,
+        raw_dept_section: rawDept || deptName,
+        item_name: rawItemName,
+        item_type: itemType,
+        routine_code: routineCode,
+        specification: '',
+        quantity: 1,
+        unit: unit,
+        priority_level: 1,
+        final_unit_price: finalPrice,
+        reference_link: rawVendor || undefined,
+      });
+    }
+
+    return parsedItems;
+  }
+
+  // ==========================================
+  // FORMAT 2: Section Header Format (Legacy Data Logistik SMA)
+  // ==========================================
   let currentRawSection = '';
   let currentDept: Department | undefined = undefined;
-  const parsedItems: EditableImportedItem[] = [];
-
-  // Track routine sequence number per department for auto-suggestion
-  const deptRoutineCounter: Record<string, number> = {};
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -100,10 +233,8 @@ export function parseLogisticExcel(
     const colB = String(row[1] ?? '').trim();
     const colC = String(row[2] ?? '').trim();
 
-    // 1. Detect Department Header Row
-    // Examples: 'A.' and 'EXPLORASI', 'B.' and 'QAQC', 'C.' and 'ENGINEERING', 'I.' and 'OBAT-OBATAN'
+    // 1. Detect Department Header Row (e.g. 'A.' and 'EXPLORASI')
     const isSectionHeader = /^[A-Z]\.?$/i.test(colB) && colC.length > 0 && isNaN(Number(colB));
-
     if (isSectionHeader) {
       currentRawSection = colC;
       currentDept = resolveDepartment(colC, departments);
@@ -119,13 +250,10 @@ export function parseLogisticExcel(
       const deptName = assignedDept?.name || currentRawSection || 'General';
       const deptId = assignedDept?.id || '00000000-0000-0000-0001-000000000001';
 
-      // Status belanja -> item_type
-      // BULANAN -> routine, KONDISIONAL -> additional
       const rawStatusBelanja = String(row[9] ?? '').toUpperCase().trim();
       const isRoutine = rawStatusBelanja.includes('BULANAN');
       const itemType: ItemCategoryType = isRoutine ? 'routine' : 'additional';
 
-      // Priority level from kategori: C1 -> 1, C2 -> 2, C3 -> 3
       const rawKategori = String(row[7] ?? '').toUpperCase().trim();
       let priorityLevel: PriorityLevel = 1;
       if (rawKategori.includes('1')) priorityLevel = 1;
@@ -133,7 +261,6 @@ export function parseLogisticExcel(
       else if (rawKategori.includes('3')) priorityLevel = 3;
       else if (rawKategori.includes('4')) priorityLevel = 3;
 
-      // Price & Qty
       const rawPrice = row[4];
       const finalPrice = typeof rawPrice === 'number' ? rawPrice : Number(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
 
@@ -143,7 +270,6 @@ export function parseLogisticExcel(
       const unit = String(row[6] ?? 'pcs').trim() || 'pcs';
       const spec = String(row[3] ?? '').trim();
 
-      // Suggested routine code if routine
       deptRoutineCounter[deptCode] = (deptRoutineCounter[deptCode] || 0) + 1;
       const seqStr = String(deptRoutineCounter[deptCode]).padStart(3, '0');
       const suggestedRoutineCode = isRoutine ? `R-${deptCode}-${seqStr}` : '';
@@ -169,3 +295,4 @@ export function parseLogisticExcel(
 
   return parsedItems;
 }
+
