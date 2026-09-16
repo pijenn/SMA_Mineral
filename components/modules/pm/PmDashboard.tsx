@@ -31,11 +31,11 @@ import {
 } from 'lucide-react';
 
 interface PmDashboardProps {
-  activeTab?: 'item_approval' | 'buy_approval' | 'rollover' | 'final_report';
-  onTabChange?: (tab: 'item_approval' | 'buy_approval' | 'rollover' | 'final_report') => void;
+  activeTab?: 'buy_approval' | 'rollover' | 'final_report';
+  onTabChange?: (tab: 'buy_approval' | 'rollover' | 'final_report') => void;
 }
 
-export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDashboardProps) {
+export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashboardProps) {
   const {
     activePeriod,
     selectedDepartmentId,
@@ -45,19 +45,20 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
     routineItems,
     transactions,
     financeReport,
-    approveItemByPm,
     approveBuyByPm,
     approveFinanceReportByPm,
   } = useApp();
 
-  const [localTab, setLocalTab] = useState<'item_approval' | 'buy_approval' | 'rollover' | 'final_report'>(activeTab);
-  const currentTab = onTabChange ? activeTab : localTab;
-  const setTab = (t: 'item_approval' | 'buy_approval' | 'rollover' | 'final_report') => {
+  const [localTab, setLocalTab] = useState<'buy_approval' | 'rollover' | 'final_report'>(
+    (activeTab as string) === 'item_approval' ? 'buy_approval' : activeTab
+  );
+  const currentTab = (onTabChange ? activeTab : localTab) === ('item_approval' as any) ? 'buy_approval' : (onTabChange ? activeTab : localTab);
+  const setTab = (t: 'buy_approval' | 'rollover' | 'final_report') => {
     if (onTabChange) onTabChange(t);
     setLocalTab(t);
   };
 
-  const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'item' | 'buy' } | null>(null);
+  const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'buy' } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -114,10 +115,6 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
     : requestItems.filter((i) => i.department_id === selectedDepartmentId);
 
   // Queues
-  const pendingItemApprovals = deptItems.filter(
-    (i) => i.lifecycle_status === 'validated' || (i.lifecycle_status === 'submitted' && i.pm_item_approval === 'pending')
-  );
-
   const pendingBuyApprovals = deptItems.filter(
     (i) => i.lifecycle_status === 'finance_budgeted' || (i.pm_item_approval === 'approved' && i.pm_buy_approval === 'pending')
   );
@@ -129,13 +126,7 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
   const handleConfirmReject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectModalItem) return;
-
-    if (rejectModalItem.type === 'item') {
-      approveItemByPm(rejectModalItem.id, false, rejectReason);
-    } else {
-      approveBuyByPm(rejectModalItem.id, false, rejectReason);
-    }
-
+    approveBuyByPm(rejectModalItem.id, false, rejectReason);
     setRejectModalItem(null);
     setRejectReason('');
   };
@@ -158,7 +149,7 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
             </span>
           </div>
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-            Approval 2-tahap (urgensi barang & otorisasi beli), alokasi surplus saldo kas, dan manajemen akun staf.
+            Approval otorisasi beli (PO tahap final), alokasi surplus saldo kas, evaluasi sign-off mingguan, dan manajemen akun staf.
           </p>
         </div>
 
@@ -201,22 +192,7 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
           </div>
         </div>
 
-        {/* Card 2: Pending Approval Barang (Stage 1) */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] shadow-xs flex items-center gap-4 transition-all hover:border-zinc-300 dark:hover:border-[#2d3440]">
-          <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500 shrink-0">
-            <Clock className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Pending Urgensi Barang
-            </div>
-            <div className="text-lg sm:text-xl font-bold font-mono tracking-tight text-zinc-900 dark:text-white">
-              {pendingItemApprovals.length} Menunggu
-            </div>
-          </div>
-        </div>
-
-        {/* Card 3: Pending Otorisasi Beli (Stage 2) */}
+        {/* Card 2: Pending Otorisasi Beli (Stage 2) */}
         <div className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] shadow-xs flex items-center gap-4 transition-all hover:border-zinc-300 dark:hover:border-[#2d3440]">
           <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-500 shrink-0">
             <ShieldCheck className="w-6 h-6" />
@@ -227,6 +203,21 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
             </div>
             <div className="text-lg sm:text-xl font-bold font-mono tracking-tight text-zinc-900 dark:text-white">
               {pendingBuyApprovals.length} Menunggu
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Barang Tertunda / Defisit */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] shadow-xs flex items-center gap-4 transition-all hover:border-zinc-300 dark:hover:border-[#2d3440]">
+          <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+            <Layers className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              Barang Tertunda (Defisit)
+            </div>
+            <div className="text-lg sm:text-xl font-bold font-mono tracking-tight text-zinc-900 dark:text-white">
+              {backlogItems.length} Menunggu
             </div>
           </div>
         </div>
@@ -309,16 +300,6 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
       {/* Module Sub-Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-[#232830] pb-3">
         <button
-          onClick={() => setTab('item_approval')}
-          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-            currentTab === 'item_approval'
-              ? 'bg-emerald-500 text-slate-950 shadow-xs'
-              : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
-          }`}
-        >
-          Persetujuan Urgensi Barang ({pendingItemApprovals.length})
-        </button>
-        <button
           onClick={() => setTab('buy_approval')}
           className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
             currentTab === 'buy_approval'
@@ -349,84 +330,6 @@ export function PmDashboard({ activeTab = 'item_approval', onTabChange }: PmDash
           Sign-Off Laporan Mingguan
         </button>
       </div>
-
-      {/* Tab: Persetujuan Urgensi Barang (Stage 1) */}
-      {currentTab === 'item_approval' && (
-        <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs">
-          <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-              Antrean Persetujuan Urgensi Kebutuhan (Tahap 1)
-            </h2>
-            <span className="text-xs font-semibold text-zinc-400">
-              {pendingItemApprovals.length} Barang Menunggu
-            </span>
-          </div>
-
-          <div className="divide-y divide-zinc-200 dark:divide-[#232830]">
-            {pendingItemApprovals.length === 0 ? (
-              <div className="text-center py-16 px-4 text-xs text-zinc-400">
-                Tidak ada antrean barang menunggu persetujuan urgensi.
-              </div>
-            ) : (
-              pendingItemApprovals.map((item) => {
-                const routine = routineItems.find((r) => r.id === item.routine_item_id);
-                const itemName = routine?.name || item.custom_item_name || 'Barang Tambang';
-                const totalEstimatedCost = item.estimated_total_price || (item.quantity * (item.final_unit_price || 0));
-
-                return (
-                  <div
-                    key={item.id}
-                    className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-zinc-50/60 dark:hover:bg-[#181c22] transition-colors"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">
-                          Dept: <strong className="text-zinc-800 dark:text-zinc-200">{item.department_name}</strong>
-                        </span>
-                        <PriorityBadge level={item.priority_level} showFull />
-                        <LifecycleBadge status={item.lifecycle_status} />
-                      </div>
-                      <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
-                        {itemName}
-                      </h4>
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-4">
-                        <span>
-                          Jumlah: <strong className="text-zinc-800 dark:text-zinc-200">{item.quantity} {item.unit}</strong>
-                        </span>
-                        <span>
-                          Estimasi Biaya:{' '}
-                          <strong className="text-emerald-600 dark:text-emerald-400 font-mono font-bold">
-                            {formatCurrency(totalEstimatedCost)}
-                          </strong>
-                        </span>
-                        {item.specification && (
-                          <span className="italic text-zinc-400">&ldquo;{item.specification}&rdquo;</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
-                      <button
-                        onClick={() => setRejectModalItem({ id: item.id, type: 'item' })}
-                        className="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer"
-                      >
-                        Tolak
-                      </button>
-                      <button
-                        onClick={() => approveItemByPm(item.id, true)}
-                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Setujui Barang</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Tab: Otorisasi Pembelian PO (Stage 2) */}
       {currentTab === 'buy_approval' && (

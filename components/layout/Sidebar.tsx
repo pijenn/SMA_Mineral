@@ -60,6 +60,7 @@ export function Sidebar({
       case 'admin_finance':
         return [
           { id: 'budget', label: 'Saldo Kas & Likuiditas', icon: LayoutDashboard },
+          { id: 'item_approval', label: 'Persetujuan Urgensi Barang', icon: ShieldCheck },
           { id: 'requests', label: 'Monitoring Request Dept', icon: ClipboardList },
           { id: 'receipts', label: 'Verifikasi Kuitansi', icon: Receipt },
           { id: 'journals', label: 'Jurnal Akuntansi Otomatis', icon: DollarSign },
@@ -68,7 +69,6 @@ export function Sidebar({
       case 'project_manager':
       default:
         return [
-          { id: 'item_approval', label: 'Persetujuan Urgensi Barang', icon: LayoutDashboard },
           { id: 'buy_approval', label: 'Otorisasi Pembelian (Buy)', icon: ShieldCheck },
           { id: 'rollover', label: 'Alokasi Surplus Rollover', icon: Layers },
           { id: 'final_report', label: 'Sign-Off Laporan Mingguan', icon: FileText },

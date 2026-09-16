@@ -103,6 +103,8 @@ interface AppContextType {
       lifecycle_status?: ItemLifecycleStatus;
     }
   ) => Promise<void>;
+  approveItemUrgency: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
+  batchApproveUrgency: (itemIds: string[], approved: boolean, notes?: string) => Promise<void>;
   approveItemByPm: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
   approveBuyByPm: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
   recordPurchase: (
@@ -1045,7 +1047,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const approveItemByPm = async (itemId: string, approved: boolean, notes?: string) => {
+  const approveItemUrgency = async (itemId: string, approved: boolean, notes?: string) => {
     const updates = {
       pm_item_approval: (approved ? 'approved' : 'rejected') as 'approved' | 'rejected',
       pm_item_approval_notes: notes || undefined,
@@ -1059,9 +1061,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       await supabase.from('procurement_request_items').update(updates).eq('id', itemId);
     } catch (err) {
-      console.error('Supabase approveItemByPm error:', err);
+      console.error('Supabase approveItemUrgency error:', err);
     }
   };
+
+  const batchApproveUrgency = async (itemIds: string[], approved: boolean, notes?: string) => {
+    if (!itemIds || itemIds.length === 0) return;
+    const updates = {
+      pm_item_approval: (approved ? 'approved' : 'rejected') as 'approved' | 'rejected',
+      pm_item_approval_notes: notes || undefined,
+      lifecycle_status: (approved ? 'pm_item_approved' : 'pm_item_rejected') as ItemLifecycleStatus,
+    };
+
+    setRequestItems((prev) =>
+      prev.map((item) => (itemIds.includes(item.id) ? { ...item, ...updates } : item))
+    );
+
+    try {
+      await supabase.from('procurement_request_items').update(updates).in('id', itemIds);
+    } catch (err) {
+      console.error('Supabase batchApproveUrgency error:', err);
+    }
+
+    const notif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      title: approved ? 'Auto Agree Urgensi Berhasil' : 'Penolakan Massal Urgensi',
+      message: `Finance telah ${approved ? 'menyetujui urgensi' : 'menolak'} ${itemIds.length} item pengadaan sekaligus.`,
+      type: 'general',
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    setNotifications((prev) => [notif, ...prev]);
+  };
+
+  const approveItemByPm = approveItemUrgency;
 
   const approveBuyByPm = async (itemId: string, approved: boolean, notes?: string) => {
     const updates = {
@@ -1351,6 +1384,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         submitRequestItems,
         batchUploadProcurementItems,
         updateItemLogistics,
+        approveItemUrgency,
+        batchApproveUrgency,
         approveItemByPm,
         approveBuyByPm,
         recordPurchase,

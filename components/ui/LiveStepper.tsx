@@ -34,14 +34,14 @@ const STEPS: StepDefinition[] = [
   },
   {
     id: 'approve',
-    title: '3. Approval PM',
-    description: 'Persetujuan urgensi barang oleh Supervisor',
+    title: '3. Approval Finance',
+    description: 'Persetujuan urgensi barang oleh Finance',
     icon: ShieldCheck,
   },
   {
     id: 'buy',
-    title: '4. Pembelian (PO)',
-    description: 'Dana dicairkan & kuitansi diunggah',
+    title: '4. Otorisasi PM & PO',
+    description: 'Otorisasi beli oleh PM & eksekusi pembelian',
     icon: Check,
   },
   {
