@@ -21,6 +21,7 @@ import {
   Layers,
   Sparkles,
   ClipboardList,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -71,6 +72,7 @@ export function Sidebar({
         return [
           { id: 'buy_approval', label: 'Otorisasi Pembelian (Buy)', icon: ShieldCheck },
           { id: 'rollover', label: 'Alokasi Surplus Rollover', icon: Layers },
+          { id: 'approval_summary', label: 'Rekap Approval Dept (Excel)', icon: FileSpreadsheet },
           { id: 'final_report', label: 'Sign-Off Laporan Mingguan', icon: FileText },
         ];
     }

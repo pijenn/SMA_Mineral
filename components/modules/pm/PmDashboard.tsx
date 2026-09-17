@@ -8,6 +8,11 @@ import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/St
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import { UserManagementModal } from './UserManagementModal';
 import { generateWeeklyReportPdf } from '@/lib/pdfGenerator';
+import { DepartmentApprovalSummaryTab } from './DepartmentApprovalSummaryTab';
+import {
+  generateDepartmentApprovalExcel,
+  summarizeApprovedItemsByDepartment,
+} from '@/lib/excelGenerator';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -28,11 +33,14 @@ import {
   Printer,
   Building2,
   Receipt,
+  FileSpreadsheet,
 } from 'lucide-react';
 
+export type PmTabType = 'buy_approval' | 'rollover' | 'approval_summary' | 'final_report';
+
 interface PmDashboardProps {
-  activeTab?: 'buy_approval' | 'rollover' | 'final_report';
-  onTabChange?: (tab: 'buy_approval' | 'rollover' | 'final_report') => void;
+  activeTab?: PmTabType;
+  onTabChange?: (tab: PmTabType) => void;
 }
 
 export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashboardProps) {
@@ -49,11 +57,16 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
     approveFinanceReportByPm,
   } = useApp();
 
-  const [localTab, setLocalTab] = useState<'buy_approval' | 'rollover' | 'final_report'>(
-    (activeTab as string) === 'item_approval' ? 'buy_approval' : activeTab
+  const [localTab, setLocalTab] = useState<PmTabType>(
+    (activeTab as string) === 'item_approval' ? 'buy_approval' : (activeTab || 'buy_approval')
   );
-  const currentTab = (onTabChange ? activeTab : localTab) === ('item_approval' as any) ? 'buy_approval' : (onTabChange ? activeTab : localTab);
-  const setTab = (t: 'buy_approval' | 'rollover' | 'final_report') => {
+  const currentTab: PmTabType =
+    (onTabChange ? activeTab : localTab) === ('item_approval' as any)
+      ? 'buy_approval'
+      : onTabChange
+      ? (activeTab || 'buy_approval')
+      : localTab;
+  const setTab = (t: PmTabType) => {
     if (onTabChange) onTabChange(t);
     setLocalTab(t);
   };
@@ -62,6 +75,34 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
   const [rejectReason, setRejectReason] = useState('');
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+
+  const handleDownloadExcel = () => {
+    try {
+      setIsExportingExcel(true);
+      const summaryResult = summarizeApprovedItemsByDepartment({
+        requestItems,
+        departments,
+        routineItems,
+        scope: 'all',
+      });
+      generateDepartmentApprovalExcel({
+        period: activePeriod,
+        summaryRows: summaryResult.rows,
+        grandTotalItems: summaryResult.grandTotalItems,
+        grandTotalQuantity: summaryResult.grandTotalQuantity,
+        grandTotalBudget: summaryResult.grandTotalBudget,
+        currentUser,
+        scope: 'all',
+        routineItems,
+      });
+    } catch (err) {
+      console.error('Error generating Excel:', err);
+      alert('Terjadi kesalahan saat mengunduh Excel.');
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
 
   // Total metrics
   const totalDisbursed = activePeriod.disbursed_budget;
@@ -155,6 +196,16 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
 
         {/* Top Action Buttons */}
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleDownloadExcel}
+            disabled={isExportingExcel}
+            className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            title="Unduh Rekapitulasi Approval Departemen (Excel .xlsx)"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>{isExportingExcel ? 'Membuat Excel...' : 'Unduh Rekap Excel (Dept)'}</span>
+          </button>
+
           <button
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
@@ -254,7 +305,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
           Aksi Cepat Project Manager
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div
             onClick={() => setIsUserMgmtOpen(true)}
             className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-purple-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
@@ -265,10 +316,10 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
               </div>
               <div>
                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-purple-500 transition-colors">
-                  Kelola Akun & Hak Akses Pengguna
+                  Kelola Akun & Hak Akses
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Buat akun baru atau ubah role departemen di database Supabase.
+                  Kelola akun pengguna & role departemen.
                 </p>
               </div>
             </div>
@@ -285,14 +336,34 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
               </div>
               <div>
                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-emerald-500 transition-colors">
-                  Alokasi Surplus Saldo Kas ({formatCurrency(remainingCash > 0 ? remainingCash : 0)})
+                  Alokasi Surplus ({formatCurrency(remainingCash > 0 ? remainingCash : 0)})
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Gunakan surplus sisa kas untuk membiayai item yang tertunda defisit.
+                  Biayai barang backlog dari surplus kas.
                 </p>
               </div>
             </div>
             <ArrowRight className="w-5 h-5 text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all shrink-0" />
+          </div>
+
+          <div
+            onClick={() => setTab('approval_summary')}
+            className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-teal-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-11 h-11 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-500 shrink-0">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-teal-500 transition-colors">
+                  Rekap Approval Dept (Excel)
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Ringkasan item disetujui PM sebelum Weekly Report.
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-zinc-400 group-hover:text-teal-500 group-hover:translate-x-1 transition-all shrink-0" />
           </div>
         </div>
       </div>
@@ -318,6 +389,17 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
           }`}
         >
           Alokasi Surplus & Rollover ({backlogItems.length})
+        </button>
+        <button
+          onClick={() => setTab('approval_summary')}
+          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            currentTab === 'approval_summary'
+              ? 'bg-emerald-500 text-slate-950 shadow-xs'
+              : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+          }`}
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          <span>Rekap Approval Dept (Excel)</span>
         </button>
         <button
           onClick={() => setTab('final_report')}
@@ -472,6 +554,14 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
         </div>
       )}
 
+      {/* Tab: Rekap Approval Mingguan Per Departemen (Excel) */}
+      {currentTab === 'approval_summary' && (
+        <DepartmentApprovalSummaryTab
+          onNavigateToFinalReport={() => setTab('final_report')}
+          onNavigateToBuyApproval={() => setTab('buy_approval')}
+        />
+      )}
+
       {/* Tab: Sign-Off Laporan Mingguan */}
       {currentTab === 'final_report' && (
         <div className="space-y-6">
@@ -510,6 +600,16 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
 
             {/* Actions */}
             <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleDownloadExcel}
+                disabled={isExportingExcel}
+                className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
+                title="Unduh Rekapitulasi Approval Departemen (Excel .xlsx)"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>{isExportingExcel ? 'Membuat Excel...' : 'Unduh Rekap Excel'}</span>
+              </button>
+
               <button
                 onClick={handleDownloadPdf}
                 disabled={isGeneratingPdf}
