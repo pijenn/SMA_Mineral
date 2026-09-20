@@ -7,6 +7,7 @@ import {
   UserProfile,
   RoutineItem,
   ProcurementPeriod,
+  PeriodStatus,
   ProcurementRequestItem,
   PurchaseTransaction,
   FinancialJournalEntry,
@@ -41,13 +42,13 @@ const INITIAL_PERIOD: ProcurementPeriod = {
   id: '00000000-0000-0000-0002-000000000001',
   year: 2026,
   week_number: 36,
-  period_name: 'Minggu ke-36 (01 Sep - 07 Sep 2026)',
-  start_date: '2026-09-01',
-  end_date: '2026-09-07',
+  period_name: 'Minggu ke-4 (September 2026)',
+  start_date: '2026-09-22',
+  end_date: '2026-09-28',
   disbursed_budget: 200000000,
   previous_rollover_balance: 45500000,
   status: 'submission_open',
-  notes: 'Siklus pengadaan operasional reguler minggu pertama September 2026.',
+  notes: 'Siklus pengadaan operasional reguler minggu keempat September 2026.',
 };
 
 interface AppContextType {
@@ -759,37 +760,84 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .reduce((sum, t) => sum + t.total_amount, 0);
       const surplus = Math.max(0, currentAvailable - currentSpent);
 
-      const newId = typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `period-${Date.now()}`;
-
-      const newPeriodPayload: ProcurementPeriod = {
-        id: newId,
-        year: params.year,
-        week_number: params.week_number,
-        period_name: params.period_name,
-        start_date: params.start_date,
-        end_date: params.end_date,
-        disbursed_budget: 0,
-        previous_rollover_balance: surplus,
-        status: 'submission_open',
-        notes: `Periode baru diaktifkan oleh Project Manager. Saldo awal dialihkan dari surplus periode sebelumnya (Rp ${surplus.toLocaleString('id-ID')}).`,
-      };
-
-      const { data, error } = await supabase
+      // 2. Check if period for this year and week_number already exists
+      const { data: existingPeriod, error: checkError } = await supabase
         .from('procurement_periods')
-        .insert([newPeriodPayload])
-        .select()
-        .single();
+        .select('*')
+        .eq('year', params.year)
+        .eq('week_number', params.week_number)
+        .maybeSingle();
 
-      if (error) {
-        console.error('Failed to insert new period in Supabase:', error);
-        setIsAppLoading(false);
-        return { success: false, error: error.message };
+      if (checkError) {
+        console.error('Error checking existing period in Supabase:', checkError);
       }
 
-      const finalPeriod = data || newPeriodPayload;
-      setPeriods((prev) => [finalPeriod, ...prev]);
+      let finalPeriod: ProcurementPeriod;
+
+      if (existingPeriod) {
+        const updatePayload = {
+          period_name: params.period_name,
+          start_date: params.start_date,
+          end_date: params.end_date,
+          disbursed_budget: 0,
+          previous_rollover_balance: surplus,
+          status: 'submission_open' as PeriodStatus,
+          notes: `Periode baru diaktifkan oleh Project Manager. Saldo awal dialihkan dari surplus periode sebelumnya (Rp ${surplus.toLocaleString('id-ID')}).`,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { data: updatedData, error: updateError } = await supabase
+          .from('procurement_periods')
+          .update(updatePayload)
+          .eq('id', existingPeriod.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error('Failed to update existing period in Supabase:', updateError);
+          setIsAppLoading(false);
+          return { success: false, error: updateError.message };
+        }
+
+        finalPeriod = updatedData || { ...existingPeriod, ...updatePayload };
+        setPeriods((prev) => {
+          const filtered = prev.filter((p) => p.id !== existingPeriod.id);
+          return [finalPeriod, ...filtered];
+        });
+      } else {
+        const newId = typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `period-${Date.now()}`;
+
+        const newPeriodPayload: ProcurementPeriod = {
+          id: newId,
+          year: params.year,
+          week_number: params.week_number,
+          period_name: params.period_name,
+          start_date: params.start_date,
+          end_date: params.end_date,
+          disbursed_budget: 0,
+          previous_rollover_balance: surplus,
+          status: 'submission_open',
+          notes: `Periode baru diaktifkan oleh Project Manager. Saldo awal dialihkan dari surplus periode sebelumnya (Rp ${surplus.toLocaleString('id-ID')}).`,
+        };
+
+        const { data, error } = await supabase
+          .from('procurement_periods')
+          .insert([newPeriodPayload])
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Failed to insert new period in Supabase:', error);
+          setIsAppLoading(false);
+          return { success: false, error: error.message };
+        }
+
+        finalPeriod = data || newPeriodPayload;
+        setPeriods((prev) => [finalPeriod, ...prev]);
+      }
+
       setActivePeriod(finalPeriod);
 
       const notif: AppNotification = {

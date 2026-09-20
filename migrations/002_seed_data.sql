@@ -57,8 +57,8 @@ SELECT
 FROM public.departments d WHERE d.code = 'GEOLOGY'
 ON CONFLICT (item_code) DO NOTHING;
 
--- Seed Initial Procurement Period (e.g., Week 36 - 2026)
+-- Seed Initial Procurement Period (e.g., Week 36 - 2026 / Minggu ke-4)
 INSERT INTO public.procurement_periods (year, week_number, period_name, start_date, end_date, disbursed_budget, previous_rollover_balance, status)
 VALUES 
-    (2026, 36, 'Week 36 - September 2026', '2026-09-01', '2026-09-07', 150000000.00, 0.00, 'submission_open')
+    (2026, 36, 'Minggu ke-4 (September 2026)', '2026-09-22', '2026-09-28', 150000000.00, 0.00, 'submission_open')
 ON CONFLICT (year, week_number) DO NOTHING;

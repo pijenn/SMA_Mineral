@@ -58,6 +58,7 @@ export function PeriodChangeModal({ isOpen, onClose }: PeriodChangeModalProps) {
     switchPeriod,
     createAndSwitchPeriod,
     activeRole,
+    currentUser,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'create' | 'switch'>('create');
@@ -83,20 +84,25 @@ export function PeriodChangeModal({ isOpen, onClose }: PeriodChangeModalProps) {
     setCustomPeriodName(`Minggu ke-${selectedWeek} (${monthLabel} ${selectedYear})`);
   }, [selectedWeek, selectedMonth, selectedYear, monthLabel]);
 
+  // Calculate days in selected month
+  const lastDayOfMonth = useMemo(() => {
+    return new Date(selectedYear, selectedMonth, 0).getDate();
+  }, [selectedYear, selectedMonth]);
+
   // Derived dates for the chosen week/month
   const startDateStr = useMemo(() => {
-    const day = Math.min(28, (selectedWeek - 1) * 7 + 1);
+    const day = Math.min(lastDayOfMonth, (selectedWeek - 1) * 7 + 1);
     const mStr = String(selectedMonth).padStart(2, '0');
     const dStr = String(day).padStart(2, '0');
     return `${selectedYear}-${mStr}-${dStr}`;
-  }, [selectedYear, selectedMonth, selectedWeek]);
+  }, [selectedYear, selectedMonth, selectedWeek, lastDayOfMonth]);
 
   const endDateStr = useMemo(() => {
-    const day = Math.min(28, selectedWeek * 7);
+    const day = selectedWeek === 5 ? lastDayOfMonth : Math.min(lastDayOfMonth, selectedWeek * 7);
     const mStr = String(selectedMonth).padStart(2, '0');
     const dStr = String(day).padStart(2, '0');
     return `${selectedYear}-${mStr}-${dStr}`;
-  }, [selectedYear, selectedMonth, selectedWeek]);
+  }, [selectedYear, selectedMonth, selectedWeek, lastDayOfMonth]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -108,7 +114,7 @@ export function PeriodChangeModal({ isOpen, onClose }: PeriodChangeModalProps) {
 
   const handleCreateNewPeriod = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (activeRole !== 'project_manager') {
+    if (activeRole !== 'project_manager' && currentUser?.role !== 'project_manager') {
       setErrorMsg('Hanya Project Manager yang berwenang mengubah periode.');
       return;
     }

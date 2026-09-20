@@ -46,22 +46,24 @@ ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     description = EXCLUDED.description;
 
--- 4. Seed Active Procurement Period (Minggu ke-36, Sep 2026)
+-- 4. Seed Active Procurement Period (Minggu ke-4, Sep 2026)
 INSERT INTO public.procurement_periods (id, year, week_number, period_name, start_date, end_date, disbursed_budget, previous_rollover_balance, status, notes)
 VALUES (
     '00000000-0000-0000-0002-000000000001',
     2026,
     36,
-    'Minggu ke-36 (01 Sep - 07 Sep 2026)',
-    '2026-09-01',
-    '2026-09-07',
+    'Minggu ke-4 (September 2026)',
+    '2026-09-22',
+    '2026-09-28',
     200000000,
     45500000,
     'submission_open',
-    'Siklus pengadaan operasional reguler minggu pertama September 2026.'
+    'Siklus pengadaan operasional reguler minggu keempat September 2026.'
 )
 ON CONFLICT (id) DO UPDATE SET 
     period_name = EXCLUDED.period_name,
+    start_date = EXCLUDED.start_date,
+    end_date = EXCLUDED.end_date,
     disbursed_budget = EXCLUDED.disbursed_budget,
     previous_rollover_balance = EXCLUDED.previous_rollover_balance;
 
