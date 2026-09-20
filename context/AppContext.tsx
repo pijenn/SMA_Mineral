@@ -89,7 +89,9 @@ interface AppContextType {
   
   // Actions
   addRoutineItem: (item: Omit<RoutineItem, 'id' | 'created_at'>) => Promise<void>;
-  submitRequestItems: (items: Array<Partial<ProcurementRequestItem>>) => Promise<void>;
+  submitRequestItems: (
+    items: Array<Partial<ProcurementRequestItem>>
+  ) => Promise<{ success: boolean; error?: string }>;
   batchUploadProcurementItems: (
     items: EditableImportedItem[]
   ) => Promise<{ success: boolean; count: number; error?: string }>;
@@ -230,11 +232,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { data: periodList } = await supabase
         .from('procurement_periods')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('updated_at', { ascending: false });
       let currentActive = activePeriod;
       if (periodList && periodList.length > 0) {
         setPeriods(periodList);
-        currentActive = periodList[0];
+        const savedPeriodId = typeof window !== 'undefined' ? localStorage.getItem('sma_active_period_id') : null;
+        const matched = savedPeriodId ? periodList.find((p) => p.id === savedPeriodId) : null;
+        currentActive = matched || periodList[0];
         setActivePeriod(currentActive);
       }
 
@@ -608,26 +612,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  const submitRequestItems = async (newItemsData: Array<Partial<ProcurementRequestItem>>) => {
+  const submitRequestItems = async (
+    newItemsData: Array<Partial<ProcurementRequestItem>>
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!newItemsData || newItemsData.length === 0) {
+      return { success: false, error: 'Tidak ada item yang diajukan.' };
+    }
+
     const isAll = !selectedDepartmentId || selectedDepartmentId === 'all' || selectedDepartmentId === 'ALL';
-    const deptId = isAll ? (currentUser?.department_id || departments[0]?.id) : selectedDepartmentId;
+    const deptId = newItemsData[0]?.department_id || (isAll ? (currentUser?.department_id || departments[0]?.id) : selectedDepartmentId);
     const dept = departments.find((d) => d.id === deptId) || departments[0];
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
 
     // 1. Ensure parent procurement_requests record exists
     let reqRecordId = requestId;
     try {
-      const { data: existingReq } = await supabase
+      const { data: existingReq, error: checkReqErr } = await supabase
         .from('procurement_requests')
         .select('id')
         .eq('period_id', activePeriod.id)
         .eq('department_id', deptId)
         .maybeSingle();
 
+      if (checkReqErr) {
+        console.warn('Procurement request parent check error:', checkReqErr);
+      }
+
       if (existingReq) {
         reqRecordId = existingReq.id;
       } else {
-        const { data: newReq } = await supabase
+        const { data: newReq, error: insertReqErr } = await supabase
           .from('procurement_requests')
           .insert({
             id: reqRecordId,
@@ -637,27 +651,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           })
           .select('id')
           .single();
+
+        if (insertReqErr) {
+          console.error('Supabase parent procurement request create error:', insertReqErr);
+          return { success: false, error: `Gagal membuat pengajuan induk: ${insertReqErr.message}` };
+        }
         if (newReq) reqRecordId = newReq.id;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Procurement request parent check warning:', err);
+      return { success: false, error: `Gagal memeriksa pengajuan induk: ${err?.message || err}` };
     }
 
     const created: ProcurementRequestItem[] = newItemsData.map((item, idx) => {
       const routine = routineItems.find((r) => r.id === item.routine_item_id);
       const unitPrice = item.final_unit_price || routine?.estimated_unit_price || 0;
       const qty = item.quantity || 1;
+      const resolvedName = item.item_type === 'routine'
+        ? (routine?.name || item.custom_item_name || 'Barang Rutin')
+        : (item.custom_item_name || 'Barang Tambahan');
+      const resolvedUnit = item.unit || routine?.unit || 'pcs';
+      const resolvedSpec = item.specification || routine?.specification || '';
+
       return {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `item-${Date.now()}-${idx}`,
         request_id: reqRecordId,
         item_type: item.item_type || 'routine',
-        routine_item_id: item.routine_item_id,
-        custom_item_name: item.custom_item_name || routine?.name,
-        specification: item.specification || routine?.specification || '',
+        routine_item_id: item.item_type === 'routine' ? item.routine_item_id : undefined,
+        custom_item_name: resolvedName,
+        specification: resolvedSpec,
         quantity: qty,
-        unit: item.unit || routine?.unit || 'pcs',
+        unit: resolvedUnit,
         priority_level: (item.priority_level as PriorityLevel) || 1,
         is_rollover: item.is_rollover || false,
+        origin_period_id: activePeriod.id,
         final_unit_price: unitPrice,
         estimated_total_price: qty * unitPrice,
         pm_item_approval: 'pending',
@@ -672,15 +699,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     });
 
-    setAllRequestItems((prev) => [...created, ...prev]);
-    setRequestItems((prev) => [...created, ...prev]);
-
     try {
       const dbPayload = created.map((item) => ({
         id: item.id,
         request_id: item.request_id,
         item_type: item.item_type,
-        routine_item_id: item.routine_item_id || null,
+        routine_item_id: item.item_type === 'routine' ? (item.routine_item_id || null) : null,
         custom_item_name: item.custom_item_name || null,
         specification: item.specification || null,
         quantity: item.quantity,
@@ -694,10 +718,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         pm_buy_approval: 'pending',
         delivery_status: 'none',
       }));
-      await supabase.from('procurement_request_items').insert(dbPayload);
-    } catch (err) {
+
+      const { error: insertErr } = await supabase.from('procurement_request_items').insert(dbPayload);
+      if (insertErr) {
+        console.error('Supabase request items insert error:', insertErr);
+        return { success: false, error: `Gagal menyimpan item ke database: ${insertErr.message}` };
+      }
+    } catch (err: any) {
       console.error('Supabase request items insert error:', err);
+      return { success: false, error: `Kesalahan database: ${err?.message || err}` };
     }
+
+    setAllRequestItems((prev) => [...created, ...prev]);
+    setRequestItems((prev) => [...created, ...prev]);
 
     const urgentCount = created.filter((i) => i.priority_level === 3).length;
     const notif: AppNotification = {
@@ -711,6 +744,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       created_at: new Date().toISOString(),
     };
     setNotifications((prev) => [notif, ...prev]);
+
+    return { success: true };
   };
 
   const switchPeriod = async (periodId: string): Promise<{ success: boolean; error?: string }> => {
@@ -722,6 +757,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setIsAppLoading(true);
     setActivePeriod(target);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sma_active_period_id', target.id);
+    }
     setTimeout(() => {
       setIsAppLoading(false);
     }, 250);
@@ -839,6 +877,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       setActivePeriod(finalPeriod);
+      if (typeof window !== 'undefined' && finalPeriod?.id) {
+        localStorage.setItem('sma_active_period_id', finalPeriod.id);
+      }
 
       const notif: AppNotification = {
         id: `notif-${Date.now()}`,

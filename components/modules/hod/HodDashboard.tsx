@@ -22,6 +22,7 @@ import {
   FileText,
   DollarSign,
   Package,
+  Calendar,
 } from 'lucide-react';
 
 interface HodDashboardProps {
@@ -60,12 +61,16 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
       {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white">
               HOD Procurement Panel
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
               {currentDept?.code || 'DEPT'}
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>{activePeriod.period_name}</span>
             </span>
           </div>
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
@@ -337,8 +342,12 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
       </div>
 
       {/* Modals */}
-      <RequestModal isOpen={isRequestModalOpen} onClose={() => setIsRequestModalOpen(false)} />
-      <RoutineCatalogModal isOpen={isCatalogModalOpen} onClose={() => setIsCatalogModalOpen(false)} />
+      {isRequestModalOpen && (
+        <RequestModal isOpen={isRequestModalOpen} onClose={() => setIsRequestModalOpen(false)} />
+      )}
+      {isCatalogModalOpen && (
+        <RoutineCatalogModal isOpen={isCatalogModalOpen} onClose={() => setIsCatalogModalOpen(false)} />
+      )}
     </div>
   );
 }
