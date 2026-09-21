@@ -26,6 +26,10 @@ import {
   ShieldCheck,
   Receipt,
   FileSpreadsheet,
+  Eye,
+  Upload,
+  X,
+  FileCheck,
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 
@@ -74,6 +78,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer (Mandiri)');
   const [receiptUrl, setReceiptUrl] = useState('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
+  const [receiptFileName, setReceiptFileName] = useState('');
+  const [receiptFileType, setReceiptFileType] = useState('image/jpeg');
+  const [receiptUploadMode, setReceiptUploadMode] = useState<'url' | 'file'>('url');
+
+  // Item detail modal state for Admin Logistik
+  const [selectedDetailItem, setSelectedDetailItem] = useState<ProcurementRequestItem | null>(null);
 
   // Delivery status state
   const [deliveryModalItem, setDeliveryModalItem] = useState<ProcurementRequestItem | null>(null);
@@ -169,7 +179,28 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
       ? item.reference_link
       : 'PT Mitra Supplier Mining';
     setVendorName(defaultVendor);
-    setInvoiceNumber(`INV-${Date.now().toString().slice(-4)}`);
+    const invNum = `INV-${Date.now().toString().slice(-4)}`;
+    setInvoiceNumber(invNum);
+    setReceiptUrl('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
+    setReceiptFileName(`Kuitansi_${invNum}.jpg`);
+    setReceiptFileType('image/jpeg');
+    setReceiptUploadMode('url');
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setReceiptFileName(file.name);
+    setReceiptFileType(file.type || 'image/jpeg');
+
+    const reader = new FileReader();
+    reader.onload = (uploadEvent) => {
+      if (typeof uploadEvent.target?.result === 'string') {
+        setReceiptUrl(uploadEvent.target.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleExecutePurchase = (e: React.FormEvent) => {
@@ -189,7 +220,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         payment_method: paymentMethod,
         notes: `Pembelian operasional ${purchaseModalItem.quantity} ${purchaseModalItem.unit} untuk Dept ${purchaseModalItem.department_name}`,
       },
-      [purchaseModalItem.id]
+      [purchaseModalItem.id],
+      receiptUrl ? {
+        file_url: receiptUrl,
+        file_name: receiptFileName || `Kuitansi_${invoiceNumber}.jpg`,
+        file_type: receiptFileType || 'image/jpeg',
+      } : undefined
     );
 
     setPurchaseModalItem(null);
@@ -423,9 +459,18 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                       <LifecycleBadge status={item.lifecycle_status} />
                     </div>
 
-                    <h4 className="text-sm sm:text-base font-bold text-zinc-900 dark:text-white">
+                    <h4
+                      onClick={() => setSelectedDetailItem(item)}
+                      className="text-sm sm:text-base font-bold text-zinc-900 dark:text-white cursor-pointer hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                    >
                       {itemName}
                     </h4>
+
+                    {item.specification && (
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">Spesifikasi:</span> {item.specification}
+                      </p>
+                    )}
 
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-4 gap-y-1">
                       <span>
@@ -469,6 +514,16 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
 
                   {/* Right: Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2 self-start lg:self-center shrink-0">
+                    {/* Detail Item Button */}
+                    <button
+                      onClick={() => setSelectedDetailItem(item)}
+                      className="px-3.5 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold border border-blue-200 dark:border-blue-800/40 transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Lihat Rincian & Tracking Lengkap Barang"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Detail</span>
+                    </button>
+
                     {/* Sourcing Input Button */}
                     <button
                       onClick={() => handleOpenSourcing(item)}
@@ -675,17 +730,92 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Foto Bukti Kuitansi / Faktur (URL Foto)
-                </label>
-                <input
-                  type="url"
-                  value={receiptUrl}
-                  onChange={(e) => setReceiptUrl(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                  required
-                />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                    Bukti Kuitansi / Faktur Pembelian:
+                  </label>
+                  <div className="flex items-center gap-1 text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setReceiptUploadMode('file')}
+                      className={`px-2 py-0.5 rounded cursor-pointer ${
+                        receiptUploadMode === 'file'
+                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      Unggah File
+                    </button>
+                    <span className="text-zinc-400">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setReceiptUploadMode('url')}
+                      className={`px-2 py-0.5 rounded cursor-pointer ${
+                        receiptUploadMode === 'url'
+                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      URL Gambar
+                    </button>
+                  </div>
+                </div>
+
+                {receiptUploadMode === 'file' ? (
+                  <div className="space-y-2">
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-300 dark:border-[#2a323e] hover:border-emerald-500 rounded-xl p-4 cursor-pointer bg-zinc-50 dark:bg-[#0e1115] transition-colors">
+                      <Upload className="w-6 h-6 text-zinc-400 mb-1" />
+                      <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                        {receiptFileName ? receiptFileName : 'Pilih file kuitansi (JPG, PNG, PDF)'}
+                      </span>
+                      <span className="text-[10px] text-zinc-400 mt-0.5">
+                        Klik untuk memilih dokumen invoice dari komputer
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <input
+                    type="url"
+                    placeholder="https://..."
+                    value={receiptUrl}
+                    onChange={(e) => setReceiptUrl(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    required
+                  />
+                )}
+
+                {/* Proof Preview */}
+                {receiptUrl && (
+                  <div className="p-2 rounded-xl bg-zinc-100 dark:bg-[#181c22] border border-zinc-200 dark:border-[#262c36] flex items-center gap-3">
+                    {receiptUrl.startsWith('data:application/pdf') ? (
+                      <div className="w-12 h-12 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shrink-0">
+                        <FileText className="w-6 h-6" />
+                      </div>
+                    ) : (
+                      <img
+                        src={receiptUrl}
+                        alt="Preview Kuitansi"
+                        className="w-12 h-12 rounded-lg object-cover border border-zinc-300 dark:border-[#2a323e] shrink-0"
+                      />
+                    )}
+                    <div className="text-xs overflow-hidden flex-1">
+                      <div className="font-bold text-zinc-800 dark:text-zinc-200 truncate">
+                        {receiptFileName || 'Bukti Kuitansi / Faktur PO'}
+                      </div>
+                      <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Siap dikirimkan ke antrean verifikasi Admin Finance</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-700 dark:text-emerald-400">
@@ -775,6 +905,218 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           </div>
         </div>
       )}
+      {/* Item Detail Modal for Admin Logistik */}
+      {selectedDetailItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl max-h-[90vh] bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-zinc-200 dark:border-[#232830] flex items-center justify-between bg-zinc-50 dark:bg-[#101317]">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    {routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.item_code || 'NON-RUTIN'}
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                    Dept {selectedDetailItem.department_name}
+                  </span>
+                  <PriorityBadge level={selectedDetailItem.priority_level} showFull />
+                  <LifecycleBadge status={selectedDetailItem.lifecycle_status} />
+                </div>
+                <h3 className="font-bold text-lg text-zinc-900 dark:text-white">
+                  {routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.name || selectedDetailItem.custom_item_name || 'Barang Tambang'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedDetailItem(null)}
+                className="p-2 rounded-xl text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-[#1c222a] transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+              {/* Stepper Tracking */}
+              <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2">
+                <div className="text-xs font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                  Progres 6-Tahap Siklus Pengadaan:
+                </div>
+                <LiveStepper
+                  status={selectedDetailItem.lifecycle_status}
+                  deliveryStatus={selectedDetailItem.delivery_status}
+                  eta={selectedDetailItem.eta_delivery}
+                  receivedAt={selectedDetailItem.received_at}
+                />
+              </div>
+
+              {/* Technical Specifications */}
+              <div className="space-y-1.5">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                  Spesifikasi Teknis & Part Number:
+                </h4>
+                <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] text-xs text-zinc-800 dark:text-zinc-200">
+                  {selectedDetailItem.specification ? (
+                    <span className="font-medium">{selectedDetailItem.specification}</span>
+                  ) : (
+                    <span className="text-zinc-400 italic">Tidak ada spesifikasi teknis khusus yang disertakan oleh HOD.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Detail Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Panel 1: Sourcing & Pricing */}
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2.5 text-xs">
+                  <div className="font-bold text-zinc-800 dark:text-zinc-200 pb-1.5 border-b border-zinc-200 dark:border-[#232830] flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                    <DollarSign className="w-4 h-4" />
+                    <span>Rincian Harga & Sourcing Pasar</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Kuantitas:</span>
+                    <strong className="text-zinc-900 dark:text-white">{selectedDetailItem.quantity} {selectedDetailItem.unit}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Rentang Harga Sourcing:</span>
+                    <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                      {formatCurrency(selectedDetailItem.price_range_min)} &ndash; {formatCurrency(selectedDetailItem.price_range_max)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Harga Satuan Deal:</span>
+                    <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(selectedDetailItem.final_unit_price || routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.estimated_unit_price || 0)}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between pt-1.5 border-t border-zinc-200 dark:border-[#232830]">
+                    <span className="font-bold text-zinc-700 dark:text-zinc-300">Total Estimasi Biaya:</span>
+                    <strong className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(
+                        (selectedDetailItem.quantity || 1) *
+                          (selectedDetailItem.final_unit_price || routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.estimated_unit_price || 0)
+                      )}
+                    </strong>
+                  </div>
+                  <div className="pt-2">
+                    <span className="text-zinc-500 dark:text-zinc-400 block mb-1">Referensi / Vendor:</span>
+                    {selectedDetailItem.reference_link ? (
+                      selectedDetailItem.reference_link.startsWith('http') ? (
+                        <a
+                          href={selectedDetailItem.reference_link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-blue-500 hover:underline break-all"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                          <span>{selectedDetailItem.reference_link}</span>
+                        </a>
+                      ) : (
+                        <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                          {selectedDetailItem.reference_link}
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-zinc-400 italic">Belum ada referensi vendor tercatat</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Panel 2: Logistik & Ekspedisi */}
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2.5 text-xs">
+                  <div className="font-bold text-zinc-800 dark:text-zinc-200 pb-1.5 border-b border-zinc-200 dark:border-[#232830] flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
+                    <Truck className="w-4 h-4" />
+                    <span>Status Ekspedisi & Approval</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-500 dark:text-zinc-400">Status Ekspedisi:</span>
+                    <DeliveryBadge status={selectedDetailItem.delivery_status} />
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Estimasi Tiba (ETA):</span>
+                    <strong className="text-zinc-900 dark:text-white">
+                      {formatDate(selectedDetailItem.eta_delivery)}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Diterima di Warehouse:</span>
+                    <span className="text-zinc-700 dark:text-zinc-300">
+                      {selectedDetailItem.received_at ? formatDate(selectedDetailItem.received_at) : 'Menunggu Pengiriman'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Otorisasi Pembelian (PM):</span>
+                    <span className={`font-bold ${selectedDetailItem.pm_buy_approval === 'approved' ? 'text-emerald-500' : 'text-amber-500'}`}>
+                      {selectedDetailItem.pm_buy_approval === 'approved' ? 'Disetujui Beli' : selectedDetailItem.pm_buy_approval}
+                    </span>
+                  </div>
+                  {selectedDetailItem.receipt_notes && (
+                    <div className="pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                      <span className="text-zinc-500 dark:text-zinc-400 block mb-0.5">Catatan Penerimaan Site:</span>
+                      <p className="italic text-zinc-700 dark:text-zinc-300">&ldquo;{selectedDetailItem.receipt_notes}&rdquo;</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 border-t border-zinc-200 dark:border-[#232830] bg-zinc-50 dark:bg-[#101317] flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const it = selectedDetailItem;
+                    setSelectedDetailItem(null);
+                    handleOpenSourcing(it);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-zinc-200 dark:bg-[#1e232b] hover:bg-zinc-300 dark:hover:bg-[#282f3a] text-zinc-800 dark:text-zinc-200 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Search className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Input / Edit Sourcing</span>
+                </button>
+
+                {selectedDetailItem.lifecycle_status === 'pm_buy_approved' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const it = selectedDetailItem;
+                      setSelectedDetailItem(null);
+                      handleOpenPurchase(it);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Eksekusi PO / Beli</span>
+                  </button>
+                )}
+
+                {(selectedDetailItem.lifecycle_status === 'purchased' || selectedDetailItem.delivery_status === 'in_transit') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const it = selectedDetailItem;
+                      setSelectedDetailItem(null);
+                      handleOpenDelivery(it);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>Update Ekspedisi</span>
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDetailItem(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-200 dark:bg-[#181c22] hover:bg-zinc-300 dark:hover:bg-[#222832] text-zinc-700 dark:text-zinc-300 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Excel Import & Editable Review Modal */}
       {isImportModalOpen && (
         <ExcelImportModal

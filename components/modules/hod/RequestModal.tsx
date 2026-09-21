@@ -15,6 +15,7 @@ interface RequestItemFormRow {
   quantity: number;
   unit: string;
   priority_level: PriorityLevel;
+  estimated_unit_price: number;
 }
 
 export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
@@ -38,6 +39,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           quantity: 1,
           unit: first.unit || 'pcs',
           priority_level: 1,
+          estimated_unit_price: first.estimated_unit_price || 0,
         },
       ];
     }
@@ -51,6 +53,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
         quantity: 1,
         unit: 'pcs',
         priority_level: 1,
+        estimated_unit_price: 0,
       },
     ];
   });
@@ -77,6 +80,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
             quantity: 1,
             unit: first.unit || 'pcs',
             priority_level: 1,
+            estimated_unit_price: first.estimated_unit_price || 0,
           },
         ]);
       } else {
@@ -90,6 +94,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
             quantity: 1,
             unit: 'pcs',
             priority_level: 1,
+            estimated_unit_price: 0,
           },
         ]);
       }
@@ -111,6 +116,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           quantity: 1,
           unit: defaultRoutine.unit || 'pcs',
           priority_level: 1,
+          estimated_unit_price: defaultRoutine.estimated_unit_price || 0,
         },
       ]);
     } else {
@@ -125,6 +131,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           quantity: 1,
           unit: 'pcs',
           priority_level: 1,
+          estimated_unit_price: 0,
         },
       ]);
     }
@@ -145,6 +152,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
           routine_item_id: routineId,
           specification: selected?.specification || '',
           unit: selected?.unit || 'pcs',
+          estimated_unit_price: selected?.estimated_unit_price || 0,
         };
       })
     );
@@ -184,16 +192,22 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
     setErrorMsg(null);
 
     try {
-      const payload = rows.map((r) => ({
-        department_id: activeDeptId,
-        item_type: r.item_type,
-        routine_item_id: r.item_type === 'routine' ? r.routine_item_id : undefined,
-        custom_item_name: r.item_type === 'additional' ? r.custom_item_name?.trim() : undefined,
-        specification: r.specification?.trim() || '',
-        quantity: Number(r.quantity),
-        unit: r.unit.trim(),
-        priority_level: r.priority_level,
-      }));
+      const payload = rows.map((r) => {
+        const unitPrice = Number(r.estimated_unit_price || 0);
+        const qty = Number(r.quantity);
+        return {
+          department_id: activeDeptId,
+          item_type: r.item_type,
+          routine_item_id: r.item_type === 'routine' ? r.routine_item_id : undefined,
+          custom_item_name: r.item_type === 'additional' ? r.custom_item_name?.trim() : undefined,
+          specification: r.specification?.trim() || '',
+          quantity: qty,
+          unit: r.unit.trim(),
+          priority_level: r.priority_level,
+          final_unit_price: unitPrice,
+          estimated_total_price: qty * unitPrice,
+        };
+      });
 
       const res = await submitRequestItems(payload);
       if (res && !res.success) {
@@ -257,10 +271,11 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                 ? deptRoutineItems.filter((ri) =>
                     ri.item_code.toLowerCase().includes(rowFilter) ||
                     ri.name.toLowerCase().includes(rowFilter) ||
-                    (ri.specification && ri.specification.toLowerCase().includes(rowFilter)) ||
-                    ri.id === row.routine_item_id
+                    (ri.specification && ri.specification.toLowerCase().includes(rowFilter))
                   )
                 : deptRoutineItems;
+
+              const selectedRoutine = deptRoutineItems.find((r) => r.id === row.routine_item_id);
 
               return (
                 <div
@@ -276,22 +291,24 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                       <div className="flex items-center gap-1 bg-zinc-200 dark:bg-[#181c22] p-1 rounded-xl text-xs font-bold">
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            const first = deptRoutineItems[0];
                             setRows((prev) =>
                               prev.map((r) =>
                                 r.id === row.id
                                   ? {
                                       ...r,
                                       item_type: 'routine',
-                                      routine_item_id: deptRoutineItems[0]?.id || '',
-                                      specification: deptRoutineItems[0]?.specification || '',
-                                      unit: deptRoutineItems[0]?.unit || 'pcs',
+                                      routine_item_id: first?.id || '',
+                                      specification: first?.specification || '',
+                                      unit: first?.unit || 'pcs',
                                       custom_item_name: undefined,
+                                      estimated_unit_price: first?.estimated_unit_price || 0,
                                     }
                                   : r
                               )
-                            )
-                          }
+                            );
+                          }}
                           className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
                             row.item_type === 'routine'
                               ? 'bg-emerald-500 text-slate-950 font-bold shadow-xs'
@@ -312,6 +329,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                                       routine_item_id: undefined,
                                       custom_item_name: '',
                                       unit: 'pcs',
+                                      estimated_unit_price: 0,
                                     }
                                   : r
                               )
@@ -341,113 +359,222 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                   </div>
 
                   {/* Form Fields */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                    {row.item_type === 'routine' ? (
-                      <div className="sm:col-span-6 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                            Pilih dari Master Katalog Rutin:
-                          </label>
-                          {deptRoutineItems.length > 5 && (
+                  {row.item_type === 'routine' ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        {/* Search & Select Routine Item */}
+                        <div className="sm:col-span-6 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                              Cari & Pilih dari Master Katalog Rutin:
+                            </label>
                             <span className="text-[10px] text-zinc-400">
-                              {deptRoutineItems.length} Katalog Terdaftar
+                              {deptRoutineItems.length} Katalog Tersedia
                             </span>
-                          )}
-                        </div>
+                          </div>
 
-                        {deptRoutineItems.length > 5 && (
+                          {/* Search Input for Items - Always available */}
                           <div className="relative">
-                            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                             <input
                               type="text"
-                              placeholder="Cari kode atau nama barang di katalog..."
+                              placeholder="Ketik untuk mencari nama atau kode barang..."
                               value={searchFilters[row.id] || ''}
-                              onChange={(e) =>
-                                setSearchFilters((prev) => ({ ...prev, [row.id]: e.target.value }))
-                              }
-                              className="w-full pl-8 pr-3 py-1.5 bg-zinc-100 dark:bg-[#181c22] border border-zinc-200 dark:border-[#262c36] text-zinc-900 dark:text-white text-xs rounded-lg focus:outline-none focus:border-emerald-500"
+                              onChange={(e) => {
+                                const q = e.target.value;
+                                setSearchFilters((prev) => ({ ...prev, [row.id]: q }));
+                                if (q.trim()) {
+                                  const matches = deptRoutineItems.filter((ri) =>
+                                    ri.item_code.toLowerCase().includes(q.toLowerCase()) ||
+                                    ri.name.toLowerCase().includes(q.toLowerCase()) ||
+                                    (ri.specification && ri.specification.toLowerCase().includes(q.toLowerCase()))
+                                  );
+                                  if (matches.length > 0 && (!row.routine_item_id || !matches.some((m) => m.id === row.routine_item_id))) {
+                                    handleRoutineChange(row.id, matches[0].id);
+                                  }
+                                }
+                              }}
+                              className="w-full pl-9 pr-8 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#262c36] text-zinc-900 dark:text-white text-xs rounded-xl focus:outline-none focus:border-emerald-500"
                             />
+                            {searchFilters[row.id] && (
+                              <button
+                                type="button"
+                                onClick={() => setSearchFilters((prev) => ({ ...prev, [row.id]: '' }))}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs cursor-pointer p-0.5"
+                              >
+                                ✕
+                              </button>
+                            )}
                           </div>
-                        )}
 
-                        <select
-                          value={row.routine_item_id || ''}
-                          onChange={(e) => handleRoutineChange(row.id, e.target.value)}
-                          required={row.item_type === 'routine'}
-                          className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                        >
-                          {deptRoutineItems.length === 0 ? (
-                            <option value="">(Belum ada katalog rutin untuk departemen ini)</option>
-                          ) : (
-                            <>
-                              {!row.routine_item_id && (
-                                <option value="" disabled>-- Pilih Barang Rutin --</option>
-                              )}
-                              {filteredRoutineItems.map((ri) => (
-                                <option key={ri.id} value={ri.id}>
-                                  [{ri.item_code}] {ri.name} ({formatCurrency(ri.estimated_unit_price)} / {ri.unit})
-                                </option>
-                              ))}
-                            </>
-                          )}
-                        </select>
+                          {/* Select Dropdown */}
+                          <select
+                            value={row.routine_item_id || ''}
+                            onChange={(e) => handleRoutineChange(row.id, e.target.value)}
+                            required={row.item_type === 'routine'}
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                          >
+                            {deptRoutineItems.length === 0 ? (
+                              <option value="">(Belum ada katalog rutin untuk departemen ini)</option>
+                            ) : filteredRoutineItems.length === 0 ? (
+                              <option value="" disabled>(Tidak ada barang sesuai kata kunci &ldquo;{searchFilters[row.id]}&rdquo;)</option>
+                            ) : (
+                              <>
+                                {!row.routine_item_id && (
+                                  <option value="" disabled>-- Pilih Barang Rutin --</option>
+                                )}
+                                {filteredRoutineItems.map((ri) => (
+                                  <option key={ri.id} value={ri.id}>
+                                    [{ri.item_code}] {ri.name} ({formatCurrency(ri.estimated_unit_price)} / {ri.unit})
+                                  </option>
+                                ))}
+                              </>
+                            )}
+                          </select>
+                        </div>
+
+                        {/* Quantity */}
+                        <div className="sm:col-span-3">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Jumlah (Qty):
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={row.quantity}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((r) => (r.id === row.id ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))
+                              )
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                            required
+                          />
+                        </div>
+
+                        {/* Unit */}
+                        <div className="sm:col-span-3">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Satuan:
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="pcs, unit, liter, roll"
+                            value={row.unit}
+                            onChange={(e) =>
+                              setRows((prev) => (prev.map((r) => (r.id === row.id ? { ...r, unit: e.target.value } : r))))
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                            required
+                          />
+                        </div>
                       </div>
-                    ) : (
-                      <div className="sm:col-span-6">
-                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                          Nama Barang Tambahan:
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Contoh: Palu Geologi Estwing E3-22P / Pompa Air"
-                          value={row.custom_item_name || ''}
-                          onChange={(e) =>
-                            setRows((prev) =>
-                              prev.map((r) => (r.id === row.id ? { ...r, custom_item_name: e.target.value } : r))
-                            )
-                          }
-                          className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
-                          required
-                        />
+
+                      {/* Pricing preview info strip for routine item */}
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-800 dark:text-emerald-300 flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          Harga Acuan Katalog: <strong className="font-mono">{formatCurrency(row.estimated_unit_price)}</strong> per {row.unit}
+                        </span>
+                        <span>
+                          Subtotal Estimasi: <strong className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency((row.quantity || 1) * (row.estimated_unit_price || 0))}</strong>
+                        </span>
                       </div>
-                    )}
-
-                    {/* Quantity */}
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Jumlah (Qty):
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={row.quantity}
-                        onChange={(e) =>
-                          setRows((prev) =>
-                            prev.map((r) => (r.id === row.id ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))
-                          )
-                        }
-                        className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
-                        required
-                      />
                     </div>
+                  ) : (
+                    /* Additional (Non-Rutin) Item Form with Price Input */
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        {/* Custom Item Name */}
+                        <div className="sm:col-span-5">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Nama Barang Tambahan (Non-Rutin):
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: Palu Geologi Estwing E3-22P / Pompa Air"
+                            value={row.custom_item_name || ''}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((r) => (r.id === row.id ? { ...r, custom_item_name: e.target.value } : r))
+                              )
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                            required
+                          />
+                        </div>
 
-                    {/* Unit */}
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Satuan:
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="pcs, unit, liter, roll"
-                        value={row.unit}
-                        onChange={(e) =>
-                          setRows((prev) => (prev.map((r) => (r.id === row.id ? { ...r, unit: e.target.value } : r))))
-                        }
-                        className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
-                        required
-                      />
+                        {/* Quantity */}
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Jumlah (Qty):
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={row.quantity}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((r) => (r.id === row.id ? { ...r, quantity: Math.max(1, Number(e.target.value)) } : r))
+                              )
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                            required
+                          />
+                        </div>
+
+                        {/* Unit */}
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Satuan:
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="pcs, set, roll"
+                            value={row.unit}
+                            onChange={(e) =>
+                              setRows((prev) => (prev.map((r) => (r.id === row.id ? { ...r, unit: e.target.value } : r))))
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                            required
+                          />
+                        </div>
+
+                        {/* Estimated Price Input for Non-Rutin */}
+                        <div className="sm:col-span-3">
+                          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Estimasi Harga Satuan (Rp):
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            step="1000"
+                            placeholder="Contoh: 250000"
+                            value={row.estimated_unit_price || ''}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((r) =>
+                                  r.id === row.id
+                                    ? { ...r, estimated_unit_price: Math.max(0, Number(e.target.value)) }
+                                    : r
+                                )
+                              )
+                            }
+                            className="w-full bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] text-zinc-900 dark:text-white text-xs font-mono font-semibold rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Pricing subtotal strip for non-rutin item */}
+                      <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-800 dark:text-blue-300 flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          Estimasi Harga Satuan: <strong className="font-mono">{formatCurrency(row.estimated_unit_price || 0)}</strong> per {row.unit}
+                        </span>
+                        <span>
+                          Total Estimasi Subtotal: <strong className="font-mono font-bold text-blue-600 dark:text-blue-400">{formatCurrency((row.quantity || 1) * (row.estimated_unit_price || 0))}</strong>
+                        </span>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Priority & Specs */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">

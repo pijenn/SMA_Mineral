@@ -17,6 +17,7 @@ import {
   PriorityLevel,
   ItemLifecycleStatus,
   DeliveryStatusType,
+  PurchaseProof,
 } from '@/lib/types';
 import { EditableImportedItem } from '@/lib/excelParser';
 import { formatCurrency } from '@/lib/utils';
@@ -112,7 +113,12 @@ interface AppContextType {
   approveBuyByPm: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
   recordPurchase: (
     txData: Omit<PurchaseTransaction, 'id' | 'created_at'>,
-    itemIds: string[]
+    itemIds: string[],
+    proofData?: {
+      file_url: string;
+      file_name?: string;
+      file_type?: string;
+    }
   ) => Promise<void>;
   verifyProofByFinance: (proofId: string, approved: boolean, notes?: string) => Promise<void>;
   updateDeliveryStatus: (
@@ -1205,12 +1211,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const recordPurchase = async (
     txData: Omit<PurchaseTransaction, 'id' | 'created_at'>,
-    itemIds: string[]
+    itemIds: string[],
+    proofData?: {
+      file_url: string;
+      file_name?: string;
+      file_type?: string;
+    }
   ) => {
     const txId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tx-${Date.now()}`;
+    
+    let newProofs: PurchaseProof[] = [];
+    if (proofData && proofData.file_url) {
+      const proofId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `proof-${Date.now()}`;
+      newProofs = [
+        {
+          id: proofId,
+          transaction_id: txId,
+          file_url: proofData.file_url,
+          file_name: proofData.file_name || `Kuitansi_${txData.invoice_number || txId}.jpg`,
+          file_type: proofData.file_type || 'image/jpeg',
+          verified_by_finance: false,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    }
+
     const newTx: PurchaseTransaction = {
       ...txData,
       id: txId,
+      proofs: newProofs,
       created_at: new Date().toISOString(),
     };
 
@@ -1255,7 +1284,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setJournalEntries((prev) => [jDebit, jCredit, ...prev]);
 
     try {
-      await supabase.from('purchase_transactions').insert([newTx]);
+      const { error: txErr } = await supabase.from('purchase_transactions').insert([
+        {
+          id: newTx.id,
+          period_id: newTx.period_id,
+          transaction_code: newTx.transaction_code,
+          vendor_name: newTx.vendor_name,
+          invoice_number: newTx.invoice_number,
+          purchase_date: newTx.purchase_date,
+          total_amount: newTx.total_amount,
+          payment_method: newTx.payment_method,
+          notes: newTx.notes,
+        },
+      ]);
+      if (txErr) console.error('Supabase transaction insert error:', txErr);
+
+      if (newProofs.length > 0) {
+        const { error: proofErr } = await supabase.from('purchase_proofs').insert(newProofs);
+        if (proofErr) console.error('Supabase purchase_proofs insert error:', proofErr);
+      }
+
       for (const id of itemIds) {
         await supabase
           .from('procurement_request_items')

@@ -23,6 +23,9 @@ import {
   DollarSign,
   Package,
   Calendar,
+  Search,
+  Filter,
+  X,
 } from 'lucide-react';
 
 interface HodDashboardProps {
@@ -45,6 +48,11 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
+  // Search & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'delivery' | 'delivered'>('all');
+
   const isAll = isAllDepartments(selectedDepartmentId);
   const activeDeptId = currentUser?.department_id || (!isAll ? selectedDepartmentId : (departments[0]?.id || ''));
   const currentDept = departments.find((d) => d.id === activeDeptId);
@@ -54,7 +62,34 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
   const urgentCount = deptItems.filter((i) => i.priority_level === 3).length;
   const inTransitCount = deptItems.filter((i) => i.delivery_status === 'in_transit').length;
   const deliveredCount = deptItems.filter((i) => i.lifecycle_status === 'received_at_site').length;
+  const pendingCount = deptItems.filter(
+    (i) => i.lifecycle_status === 'submitted' || i.lifecycle_status === 'validated' || i.lifecycle_status === 'draft'
+  ).length;
   const totalEstimated = deptItems.reduce((acc, i) => acc + (i.estimated_total_price || 0), 0);
+
+  // Filter items by search, priority, and status tab
+  const filteredDeptItems = deptItems.filter((item) => {
+    const routine = routineItems.find((r) => r.id === item.routine_item_id);
+    const itemName = (routine?.name || item.custom_item_name || '').toLowerCase();
+    const itemCode = (routine?.item_code || '').toLowerCase();
+    const spec = (item.specification || '').toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
+
+    const matchesSearch = !q || itemName.includes(q) || itemCode.includes(q) || spec.includes(q);
+    const matchesPriority = selectedPriorityFilter === 'ALL' || String(item.priority_level) === selectedPriorityFilter;
+
+    if (statusFilter === 'pending') {
+      return matchesSearch && matchesPriority && (item.lifecycle_status === 'submitted' || item.lifecycle_status === 'validated' || item.lifecycle_status === 'draft');
+    }
+    if (statusFilter === 'delivery') {
+      return matchesSearch && matchesPriority && (item.delivery_status === 'in_transit' || item.lifecycle_status === 'purchased' || item.lifecycle_status === 'processing_delivery');
+    }
+    if (statusFilter === 'delivered') {
+      return matchesSearch && matchesPriority && item.lifecycle_status === 'received_at_site';
+    }
+
+    return matchesSearch && matchesPriority;
+  });
 
   return (
     <div className="space-y-8">
@@ -205,14 +240,94 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
       </div>
 
       {/* Main Request Tracking Table Section */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
             Daftar Pengajuan & Pelacakan Ekspedisi
           </h2>
           <span className="text-xs font-semibold text-zinc-400">
-            Total {deptItems.length} Pengajuan
+            Menampilkan {filteredDeptItems.length} dari {deptItems.length} Pengajuan
           </span>
+        </div>
+
+        {/* Sub-Tabs */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-[#232830] pb-3">
+          <button
+            onClick={() => setStatusFilter('all')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              statusFilter === 'all'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+            }`}
+          >
+            Semua ({deptItems.length})
+          </button>
+          <button
+            onClick={() => setStatusFilter('pending')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              statusFilter === 'pending'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+            }`}
+          >
+            Menunggu Approval ({pendingCount})
+          </button>
+          <button
+            onClick={() => setStatusFilter('delivery')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              statusFilter === 'delivery'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+            }`}
+          >
+            Dalam Ekspedisi ({inTransitCount})
+          </button>
+          <button
+            onClick={() => setStatusFilter('delivered')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              statusFilter === 'delivered'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+            }`}
+          >
+            Tiba di Site ({deliveredCount})
+          </button>
+        </div>
+
+        {/* Search and Priority Filter Bar */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              placeholder="Cari nama barang, kode rutin/non-rutin, atau spesifikasi..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-9 py-2.5 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs sm:text-sm text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-emerald-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs cursor-pointer p-0.5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedPriorityFilter}
+              onChange={(e) => setSelectedPriorityFilter(e.target.value)}
+              className="bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs font-semibold px-3 py-2.5 text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-emerald-500 cursor-pointer"
+            >
+              <option value="ALL">Semua Prioritas</option>
+              <option value="3">Level 3 (K3 Mendesak)</option>
+              <option value="2">Level 2 (Operasional)</option>
+              <option value="1">Level 1 (Rutin Normal)</option>
+            </select>
+          </div>
         </div>
 
         <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs divide-y divide-zinc-200 dark:divide-[#232830]">
@@ -228,8 +343,31 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
                 Departemen Anda belum mengajukan kebutuhan pada siklus ini. Silakan klik tombol <strong>+ Buat Pengajuan</strong>.
               </p>
             </div>
+          ) : filteredDeptItems.length === 0 ? (
+            <div className="text-center py-16 px-4 space-y-3">
+              <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-[#1c222b] text-zinc-400 flex items-center justify-center mx-auto">
+                <Search className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
+                Tidak Ada Barang Sesuai Pencarian
+              </h4>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto">
+                Tidak ditemukan barang dengan kata kunci atau filter prioritas tersebut.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedPriorityFilter('ALL');
+                  setStatusFilter('all');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-bold cursor-pointer"
+              >
+                Reset Filter & Pencarian
+              </button>
+            </div>
           ) : (
-            deptItems.map((item) => {
+            filteredDeptItems.map((item) => {
               const routine = routineItems.find((r) => r.id === item.routine_item_id);
               const itemName = routine?.name || item.custom_item_name || 'Barang Tambang';
               const itemCode = routine?.item_code || 'ADDITIONAL (Non-Rutin)';

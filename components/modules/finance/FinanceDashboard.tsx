@@ -35,6 +35,8 @@ import {
   ArrowUpDown,
   Sparkles,
   CheckCheck,
+  X,
+  FileText,
 } from 'lucide-react';
 import { generateWeeklyReportPdf } from '@/lib/pdfGenerator';
 
@@ -637,13 +639,25 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="flex flex-col sm:items-end gap-1.5 shrink-0">
                       <div className="text-sm sm:text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
                         {formatCurrency(tx.total_amount)}
                       </div>
-                      <div className="text-[11px] text-zinc-400 mt-0.5">
-                        {tx.proofs?.length || 0} Lampiran Kuitansi
-                      </div>
+                      {tx.proofs && tx.proofs.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProofPreview(tx.proofs![0].file_url)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold border border-emerald-500/30 transition-colors cursor-pointer"
+                          title="Klik untuk melihat bukti fisik kuitansi dari logistik"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>Lihat Kuitansi ({tx.proofs.length})</span>
+                        </button>
+                      ) : (
+                        <div className="text-[11px] text-zinc-400 mt-0.5">
+                          0 Lampiran Kuitansi
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1256,12 +1270,23 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                   >
                     <div className="flex items-start gap-4">
                       {/* Thumbnail */}
-                      <img
-                        src={proof.file_url}
-                        alt="Bukti Kuitansi"
-                        className="w-16 h-16 rounded-xl object-cover border border-zinc-300 dark:border-[#232830] cursor-pointer hover:opacity-80 transition-opacity"
-                        onClick={() => setSelectedProofPreview(proof.file_url)}
-                      />
+                      {proof.file_url.startsWith('data:application/pdf') || proof.file_url.endsWith('.pdf') ? (
+                        <div
+                          onClick={() => setSelectedProofPreview(proof.file_url)}
+                          className="w-16 h-16 rounded-xl bg-red-500/10 border border-red-500/20 flex flex-col items-center justify-center text-red-500 cursor-pointer hover:bg-red-500/20 transition-colors shrink-0"
+                          title="Klik untuk membuka dokumen PDF kuitansi"
+                        >
+                          <FileText className="w-7 h-7 mb-0.5" />
+                          <span className="text-[9px] font-bold uppercase">PDF</span>
+                        </div>
+                      ) : (
+                        <img
+                          src={proof.file_url}
+                          alt="Bukti Kuitansi"
+                          className="w-16 h-16 rounded-xl object-cover border border-zinc-300 dark:border-[#232830] cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                          onClick={() => setSelectedProofPreview(proof.file_url)}
+                        />
+                      )}
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-200">
@@ -1405,18 +1430,58 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
         </div>
       )}
 
-      {/* Modal Preview Image */}
+      {/* Modal Preview Image / Invoice */}
       {selectedProofPreview && (
         <div
           onClick={() => setSelectedProofPreview(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs cursor-pointer animate-in fade-in duration-150"
         >
-          <div className="max-w-2xl max-h-[85vh] overflow-hidden rounded-2xl border border-zinc-700 bg-[#14171c] p-2">
-            <img
-              src={selectedProofPreview}
-              alt="Preview Nota"
-              className="w-full h-auto max-h-[80vh] object-contain rounded-xl"
-            />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-zinc-200 dark:border-[#2a323e] bg-white dark:bg-[#14171c] p-4 sm:p-5 shadow-2xl space-y-4 cursor-default"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-200 dark:border-[#232830]">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-bold text-zinc-900 dark:text-white">
+                  Bukti Kuitansi / Faktur Pembelian (Logistik)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={selectedProofPreview}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-colors flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Buka di Tab Baru</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setSelectedProofPreview(null)}
+                  className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-[#1f2530] transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto flex items-center justify-center min-h-[300px]">
+              {selectedProofPreview.startsWith('data:application/pdf') || selectedProofPreview.endsWith('.pdf') ? (
+                <iframe
+                  src={selectedProofPreview}
+                  title="Dokumen Kuitansi PDF"
+                  className="w-full h-[65vh] rounded-xl border border-zinc-200 dark:border-[#262c36]"
+                />
+              ) : (
+                <img
+                  src={selectedProofPreview}
+                  alt="Preview Bukti Kuitansi"
+                  className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-xs"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
