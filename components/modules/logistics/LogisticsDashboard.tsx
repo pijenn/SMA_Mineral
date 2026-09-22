@@ -30,6 +30,10 @@ import {
   Upload,
   X,
   FileCheck,
+  Coins,
+  CheckCircle,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 
@@ -46,6 +50,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     routineItems,
     transactions,
     updateItemLogistics,
+    adjustItemPrice,
     recordPurchase,
     updateDeliveryStatus,
     deferItemDeficit,
@@ -71,6 +76,16 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [priceMax, setPriceMax] = useState<number>(0);
   const [refLink, setRefLink] = useState('');
   const [finalPrice, setFinalPrice] = useState<number>(0);
+
+  // Dedicated Adjust Price Modal state (Admin Logistik authority for every item)
+  const [adjustPriceModalItem, setAdjustPriceModalItem] = useState<ProcurementRequestItem | null>(null);
+  const [newAdjustPrice, setNewAdjustPrice] = useState<number>(0);
+  const [adjustPriceRangeMin, setAdjustPriceRangeMin] = useState<number>(0);
+  const [adjustPriceRangeMax, setAdjustPriceRangeMax] = useState<number>(0);
+  const [adjustPriceRefLink, setAdjustPriceRefLink] = useState<string>('');
+  const [adjustPriceNotes, setAdjustPriceNotes] = useState<string>('');
+  const [isSavingAdjustPrice, setIsSavingAdjustPrice] = useState<boolean>(false);
+  const [adjustPriceFeedback, setAdjustPriceFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Purchase execution state
   const [purchaseModalItem, setPurchaseModalItem] = useState<ProcurementRequestItem | null>(null);
@@ -167,10 +182,78 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
       price_range_max: Number(priceMax),
       reference_link: refLink,
       final_unit_price: Number(finalPrice),
-      lifecycle_status: 'validated',
+      lifecycle_status: sourcingItem.lifecycle_status || 'validated',
     });
 
     setSourcingItem(null);
+  };
+
+  const handleOpenAdjustPrice = (item: ProcurementRequestItem) => {
+    const routine = routineItems.find((r) => r.id === item.routine_item_id);
+    const defaultPrice = item.final_unit_price || routine?.estimated_unit_price || 0;
+    setAdjustPriceModalItem(item);
+    setNewAdjustPrice(defaultPrice);
+    setAdjustPriceRangeMin(item.price_range_min || (defaultPrice ? defaultPrice * 0.95 : 0));
+    setAdjustPriceRangeMax(item.price_range_max || (defaultPrice ? defaultPrice * 1.1 : 0));
+    setAdjustPriceRefLink(item.reference_link || '');
+    setAdjustPriceNotes('');
+    setAdjustPriceFeedback(null);
+  };
+
+  const handleSaveAdjustPrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjustPriceModalItem) return;
+
+    if (newAdjustPrice < 0) {
+      setAdjustPriceFeedback({
+        type: 'error',
+        message: 'Harga satuan tidak boleh bernilai negatif.',
+      });
+      return;
+    }
+
+    setIsSavingAdjustPrice(true);
+    setAdjustPriceFeedback(null);
+
+    const res = await adjustItemPrice(adjustPriceModalItem.id, Number(newAdjustPrice), {
+      price_range_min: Number(adjustPriceRangeMin),
+      price_range_max: Number(adjustPriceRangeMax),
+      reference_link: adjustPriceRefLink,
+      notes: adjustPriceNotes,
+    });
+
+    setIsSavingAdjustPrice(false);
+
+    if (res.success) {
+      setAdjustPriceFeedback({
+        type: 'success',
+        message: `Harga satuan berhasil diperbarui menjadi ${formatCurrency(newAdjustPrice)}.`,
+      });
+
+      if (selectedDetailItem && selectedDetailItem.id === adjustPriceModalItem.id) {
+        setSelectedDetailItem((prev) =>
+          prev
+            ? {
+                ...prev,
+                final_unit_price: Number(newAdjustPrice),
+                price_range_min: Number(adjustPriceRangeMin),
+                price_range_max: Number(adjustPriceRangeMax),
+                reference_link: adjustPriceRefLink,
+              }
+            : null
+        );
+      }
+
+      setTimeout(() => {
+        setAdjustPriceModalItem(null);
+        setAdjustPriceFeedback(null);
+      }, 1200);
+    } else {
+      setAdjustPriceFeedback({
+        type: 'error',
+        message: res.error || 'Gagal menyimpan penyesuaian harga.',
+      });
+    }
   };
 
   const handleOpenPurchase = (item: ProcurementRequestItem) => {
@@ -522,6 +605,16 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     >
                       <Eye className="w-3.5 h-3.5 text-blue-500" />
                       <span>Detail</span>
+                    </button>
+
+                    {/* Sesuaikan Harga Button (Every item) */}
+                    <button
+                      onClick={() => handleOpenAdjustPrice(item)}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Sesuaikan harga satuan untuk barang ini"
+                    >
+                      <Coins className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Sesuaikan Harga</span>
                     </button>
 
                     {/* Sourcing Input Button */}
@@ -981,11 +1074,21 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                       {formatCurrency(selectedDetailItem.price_range_min)} &ndash; {formatCurrency(selectedDetailItem.price_range_max)}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="text-zinc-500 dark:text-zinc-400">Harga Satuan Deal:</span>
-                    <strong className="font-mono text-emerald-600 dark:text-emerald-400">
-                      {formatCurrency(selectedDetailItem.final_unit_price || routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.estimated_unit_price || 0)}
-                    </strong>
+                    <div className="flex items-center gap-2">
+                      <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(selectedDetailItem.final_unit_price || routineItems.find((r) => r.id === selectedDetailItem.routine_item_id)?.estimated_unit_price || 0)}
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAdjustPrice(selectedDetailItem)}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/30 cursor-pointer transition-colors"
+                        title="Sesuaikan harga satuan barang ini"
+                      >
+                        Ubah
+                      </button>
+                    </div>
                   </div>
                   <div className="flex justify-between pt-1.5 border-t border-zinc-200 dark:border-[#232830]">
                     <span className="font-bold text-zinc-700 dark:text-zinc-300">Total Estimasi Biaya:</span>
@@ -1060,7 +1163,20 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
 
             {/* Footer Actions */}
             <div className="p-4 border-t border-zinc-200 dark:border-[#232830] bg-zinc-50 dark:bg-[#101317] flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const it = selectedDetailItem;
+                    handleOpenAdjustPrice(it);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                  title="Sesuaikan harga satuan untuk barang ini"
+                >
+                  <Coins className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Sesuaikan Harga</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -1116,6 +1232,284 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           </div>
         </div>
       )}
+
+      {/* Adjust Price Modal (Admin Logistik authority for every item) */}
+      {adjustPriceModalItem && (() => {
+        const routine = routineItems.find((r) => r.id === adjustPriceModalItem.routine_item_id);
+        const itemName = routine?.name || adjustPriceModalItem.custom_item_name || 'Barang Tambang';
+        const catalogPrice = routine?.estimated_unit_price || 0;
+        const currentPrice = adjustPriceModalItem.final_unit_price || catalogPrice || 0;
+        const qty = adjustPriceModalItem.quantity || 1;
+        const currentTotal = qty * currentPrice;
+        const enteredPrice = Number(newAdjustPrice) || 0;
+        const newTotal = qty * enteredPrice;
+        const totalDiff = newTotal - currentTotal;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in">
+            <div className="w-full max-w-lg bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-[#232830] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    <Coins className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-zinc-900 dark:text-white">
+                      Sesuaikan Harga Satuan Barang
+                    </h3>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Otoritas Admin Logistik &bull; Update Nilai Deal / Acuan Pasar
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setAdjustPriceModalItem(null)}
+                  className="text-zinc-400 hover:text-zinc-200 text-sm font-bold cursor-pointer p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-[#1f242c]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {adjustPriceFeedback && (
+                <div
+                  className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                    adjustPriceFeedback.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400'
+                  }`}
+                >
+                  {adjustPriceFeedback.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                  )}
+                  <div className="font-medium">{adjustPriceFeedback.message}</div>
+                </div>
+              )}
+
+              {/* Item Info Box */}
+              <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-200 dark:bg-[#1f242c] text-zinc-700 dark:text-zinc-300">
+                    Dept: {adjustPriceModalItem.department_name}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <PriorityBadge level={adjustPriceModalItem.priority_level} showFull />
+                    <LifecycleBadge status={adjustPriceModalItem.lifecycle_status} />
+                  </div>
+                </div>
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-white">
+                  {itemName}
+                </h4>
+                {adjustPriceModalItem.specification && (
+                  <p className="text-zinc-500 dark:text-zinc-400 text-[11px] italic">
+                    &ldquo;{adjustPriceModalItem.specification}&rdquo;
+                  </p>
+                )}
+                <div className="pt-2 border-t border-zinc-200 dark:border-[#232830] grid grid-cols-2 gap-2 text-zinc-600 dark:text-zinc-400">
+                  <div>
+                    Kuantitas:{' '}
+                    <strong className="text-zinc-900 dark:text-white font-mono">
+                      {qty} {adjustPriceModalItem.unit}
+                    </strong>
+                  </div>
+                  <div>
+                    Harga Saat Ini:{' '}
+                    <strong className="text-zinc-900 dark:text-white font-mono">
+                      {formatCurrency(currentPrice)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleSaveAdjustPrice} className="space-y-4">
+                {/* Price Input */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                      Harga Satuan Baru (IDR):
+                    </label>
+                    <span className="text-xs font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(enteredPrice)}
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-zinc-400">
+                      Rp
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      required
+                      value={newAdjustPrice}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setNewAdjustPrice(val);
+                        if (!adjustPriceRangeMin || adjustPriceRangeMin === 0) {
+                          setAdjustPriceRangeMin(val * 0.95);
+                        }
+                        if (!adjustPriceRangeMax || adjustPriceRangeMax === 0) {
+                          setAdjustPriceRangeMax(val * 1.1);
+                        }
+                      }}
+                      className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-300 dark:border-[#2a313d] rounded-xl text-sm font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  {/* Preset Buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mr-1">
+                      Preset:
+                    </span>
+                    {catalogPrice > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewAdjustPrice(catalogPrice)}
+                        className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-emerald-500/10 hover:text-emerald-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                      >
+                        Katalog ({formatCurrency(catalogPrice)})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustPrice((p) => Math.round(p * 0.9))}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-emerald-500/10 hover:text-emerald-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      &minus;10%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustPrice((p) => Math.round(p * 0.95))}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-emerald-500/10 hover:text-emerald-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      &minus;5%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustPrice((p) => Math.round(p * 1.05))}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-emerald-500/10 hover:text-emerald-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      +5%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustPrice((p) => Math.round(p * 1.1))}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-emerald-500/10 hover:text-emerald-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      +10%
+                    </button>
+                  </div>
+                </div>
+
+                {/* Recalculation Preview Card */}
+                <div className="p-3.5 rounded-xl bg-zinc-100 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-500 dark:text-zinc-400">Total Estimasi Baru ({qty} {adjustPriceModalItem.unit}):</span>
+                    <strong className="font-mono font-bold text-zinc-900 dark:text-white text-sm">
+                      {formatCurrency(newTotal)}
+                    </strong>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-zinc-200 dark:border-[#232830]">
+                    <span className="text-zinc-500 dark:text-zinc-400">Selisih Anggaran Total:</span>
+                    <span
+                      className={`font-mono font-bold text-xs flex items-center gap-1 ${
+                        totalDiff < 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : totalDiff > 0
+                          ? 'text-amber-500'
+                          : 'text-zinc-400'
+                      }`}
+                    >
+                      {totalDiff < 0 ? (
+                        <>
+                          <TrendingDown className="w-3.5 h-3.5" />
+                          <span>Hemat {formatCurrency(Math.abs(totalDiff))}</span>
+                        </>
+                      ) : totalDiff > 0 ? (
+                        <>
+                          <TrendingUp className="w-3.5 h-3.5" />
+                          <span>+{formatCurrency(totalDiff)}</span>
+                        </>
+                      ) : (
+                        <span>Tidak Berubah</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Vendor / Reference Link */}
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Referensi Vendor / Link Marketplace (Opsional):
+                  </label>
+                  <input
+                    type="text"
+                    value={adjustPriceRefLink}
+                    onChange={(e) => setAdjustPriceRefLink(e.target.value)}
+                    placeholder="Contoh: PT Mitra Mining Teknik atau https://..."
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                {/* Reason / Notes */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                    Catatan Penyesuaian Harga (Opsional):
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 pb-1">
+                    {[
+                      'Negosiasi diskon supplier',
+                      'Kenaikan harga pasar/distributor',
+                      'Update penawaran vendor resmi',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setAdjustPriceNotes(preset)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium cursor-pointer transition-all ${
+                          adjustPriceNotes === preset
+                            ? 'bg-emerald-500 text-slate-950 font-bold'
+                            : 'bg-zinc-100 dark:bg-[#1a1f26] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-[#252c36]'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={adjustPriceNotes}
+                    onChange={(e) => setAdjustPriceNotes(e.target.value)}
+                    placeholder="Tuliskan alasan penyesuaian harga..."
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                  <button
+                    type="button"
+                    onClick={() => setAdjustPriceModalItem(null)}
+                    disabled={isSavingAdjustPrice}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-800 dark:hover:text-white cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingAdjustPrice}
+                    className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Coins className="w-3.5 h-3.5" />
+                    <span>{isSavingAdjustPrice ? 'Menyimpan...' : 'Simpan Penyesuaian Harga'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Excel Import & Editable Review Modal */}
       {isImportModalOpen && (

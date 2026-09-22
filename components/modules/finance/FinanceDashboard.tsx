@@ -62,6 +62,7 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
     updatePeriodCash,
     approveItemUrgency,
     batchApproveUrgency,
+    decreaseItemQuantity,
   } = useApp();
 
   const [localTab, setLocalTab] = useState<'budget' | 'item_approval' | 'requests' | 'receipts' | 'journals' | 'report'>(activeTab);
@@ -227,6 +228,13 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
   const [rejectUrgencyReason, setRejectUrgencyReason] = useState('');
   const [isRejectingUrgency, setIsRejectingUrgency] = useState(false);
 
+  // Decrease Quantity Modal State (Admin Finance authority)
+  const [decreaseModalItem, setDecreaseModalItem] = useState<any | null>(null);
+  const [decreaseNewQty, setDecreaseNewQty] = useState<number>(1);
+  const [decreaseReason, setDecreaseReason] = useState<string>('Efisiensi alokasi anggaran kas mingguan');
+  const [isDecreasingQty, setIsDecreasingQty] = useState<boolean>(false);
+  const [decreaseFeedback, setDecreaseFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   // Check whether urgency filter is active (Filter is ON)
   const isFilterActive =
     urgencyFilter !== 'ALL' ||
@@ -354,6 +362,61 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
     setIsRejectingUrgency(false);
     setRejectUrgencyModalItem(null);
     setRejectUrgencyReason('');
+  };
+
+  const handleOpenDecreaseModal = (item: any) => {
+    setDecreaseModalItem(item);
+    setDecreaseNewQty(Math.max(1, (item.quantity || 1) - 1));
+    setDecreaseReason('Efisiensi alokasi anggaran kas mingguan');
+    setDecreaseFeedback(null);
+  };
+
+  const handleConfirmDecreaseQty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!decreaseModalItem) return;
+
+    if (decreaseNewQty <= 0) {
+      setDecreaseFeedback({
+        type: 'error',
+        message: 'Kuantitas baru harus lebih dari 0. Gunakan tombol Tolak jika ingin membatalkan/menolak barang sepenuhnya.',
+      });
+      return;
+    }
+
+    if (decreaseNewQty >= decreaseModalItem.quantity) {
+      setDecreaseFeedback({
+        type: 'error',
+        message: `Kuantitas baru (${decreaseNewQty}) harus lebih kecil dari kuantitas awal (${decreaseModalItem.quantity}).`,
+      });
+      return;
+    }
+
+    setIsDecreasingQty(true);
+    setDecreaseFeedback(null);
+
+    const res = await decreaseItemQuantity(decreaseModalItem.id, Number(decreaseNewQty), decreaseReason);
+    setIsDecreasingQty(false);
+
+    if (res.success) {
+      const routine = routineItems.find((r) => r.id === decreaseModalItem.routine_item_id);
+      const unitPrice = decreaseModalItem.final_unit_price || routine?.estimated_unit_price || 0;
+      const savedAmount = (decreaseModalItem.quantity - decreaseNewQty) * unitPrice;
+
+      setDecreaseFeedback({
+        type: 'success',
+        message: `Berhasil mengurangi kuantitas menjadi ${decreaseNewQty} ${decreaseModalItem.unit}. Penghematan kas: ${formatCurrency(savedAmount)}.`,
+      });
+
+      setTimeout(() => {
+        setDecreaseModalItem(null);
+        setDecreaseFeedback(null);
+      }, 1200);
+    } else {
+      setDecreaseFeedback({
+        type: 'error',
+        message: res.error || 'Gagal memperbarui kuantitas barang.',
+      });
+    }
   };
 
   return (
@@ -998,15 +1061,30 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                             Catatan Logistik: {item.logistics_notes}
                           </div>
                         )}
+
+                        {item.pm_item_approval_notes && (
+                          <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block">
+                            Catatan Finance: {item.pm_item_approval_notes}
+                          </div>
+                        )}
                       </div>
 
                       {/* Item Action Buttons */}
-                      <div className="flex items-center gap-2 self-end md:self-auto shrink-0 pt-2 md:pt-0">
+                      <div className="flex flex-wrap items-center gap-2 self-end md:self-auto shrink-0 pt-2 md:pt-0">
                         <button
                           onClick={() => setRejectUrgencyModalItem({ id: item.id, name: itemName })}
                           className="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer"
+                          title="Tolak item sepenuhnya"
                         >
                           Tolak
+                        </button>
+                        <button
+                          onClick={() => handleOpenDecreaseModal(item)}
+                          className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                          title="Kurangi kuantitas barang ini (efisiensi anggaran)"
+                        >
+                          <TrendingDown className="w-3.5 h-3.5" />
+                          <span>Kurangi Qty</span>
                         </button>
                         <button
                           onClick={() => approveItemUrgency(item.id, true)}
@@ -1207,6 +1285,12 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                             </strong>
                           </span>
                         </div>
+
+                        {item.pm_item_approval_notes && (
+                          <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block mt-1">
+                            Catatan Finance: {item.pm_item_approval_notes}
+                          </div>
+                        )}
                       </div>
 
                       {/* Right: Stepper / Approval Details */}
@@ -1234,6 +1318,17 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                             <DeliveryBadge status={item.delivery_status} />
                           )}
                         </div>
+
+                        {['submitted', 'validated', 'pm_item_approved', 'pm_buy_approved'].includes(item.lifecycle_status) && (
+                          <button
+                            onClick={() => handleOpenDecreaseModal(item)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1"
+                            title="Kurangi kuantitas item ini"
+                          >
+                            <TrendingDown className="w-3 h-3" />
+                            <span>Kurangi Qty</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1955,6 +2050,265 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
           </div>
         </div>
       )}
+
+      {/* Decrease Quantity Modal (Admin Finance) */}
+      {decreaseModalItem && (() => {
+        const routine = routineItems.find((r) => r.id === decreaseModalItem.routine_item_id);
+        const itemName = routine?.name || decreaseModalItem.custom_item_name || 'Barang Pengadaan';
+        const unitPrice = decreaseModalItem.final_unit_price || routine?.estimated_unit_price || 0;
+        const currentQty = decreaseModalItem.quantity;
+        const currentTotal = currentQty * unitPrice;
+        const safeNewQty = Math.max(1, Math.min(currentQty - 1, Number(decreaseNewQty) || 1));
+        const newTotal = safeNewQty * unitPrice;
+        const budgetSaved = Math.max(0, currentTotal - newTotal);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+            <div className="w-full max-w-lg bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-[#232830] pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    <TrendingDown className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-zinc-900 dark:text-white">
+                      Kurangi Kuantitas Item
+                    </h3>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Otoritas Admin Finance &bull; Rasionalisasi Anggaran Kas
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDecreaseModalItem(null)}
+                  className="text-zinc-400 hover:text-zinc-200 text-sm font-bold cursor-pointer p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-[#1f242c]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {decreaseFeedback && (
+                <div
+                  className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                    decreaseFeedback.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400'
+                  }`}
+                >
+                  {decreaseFeedback.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  )}
+                  <div className="font-medium">{decreaseFeedback.message}</div>
+                </div>
+              )}
+
+              {/* Item Overview Card */}
+              <div className="p-4 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-200 dark:bg-[#1f242c] text-zinc-700 dark:text-zinc-300">
+                    Dept: {decreaseModalItem.department_name}
+                  </span>
+                  {routine?.item_code && (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      {routine.item_code}
+                    </span>
+                  )}
+                </div>
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-white">
+                  {itemName}
+                </h4>
+                {decreaseModalItem.specification && (
+                  <p className="text-zinc-500 dark:text-zinc-400 text-[11px] italic">
+                    &ldquo;{decreaseModalItem.specification}&rdquo;
+                  </p>
+                )}
+                <div className="pt-2 border-t border-zinc-200 dark:border-[#232830] grid grid-cols-2 gap-2 text-zinc-600 dark:text-zinc-400">
+                  <div>
+                    Jumlah Awal:{' '}
+                    <strong className="text-zinc-900 dark:text-white font-mono">
+                      {currentQty} {decreaseModalItem.unit}
+                    </strong>
+                  </div>
+                  <div>
+                    Harga Satuan:{' '}
+                    <strong className="text-zinc-900 dark:text-white font-mono">
+                      {formatCurrency(unitPrice)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleConfirmDecreaseQty} className="space-y-4">
+                {/* Quantity Adjustment Controls */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                      Kuantitas Baru (Setelah Pengurangan):
+                    </label>
+                    <span className="text-[11px] text-zinc-400 font-mono">
+                      Maks: {currentQty - 1} {decreaseModalItem.unit}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDecreaseNewQty((prev) => Math.max(1, (Number(prev) || 1) - 1))}
+                      disabled={decreaseNewQty <= 1}
+                      className="p-2.5 rounded-xl bg-zinc-100 dark:bg-[#1a1f26] hover:bg-zinc-200 dark:hover:bg-[#252c36] text-zinc-700 dark:text-zinc-300 font-bold disabled:opacity-40 cursor-pointer text-sm"
+                    >
+                      &minus;1
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={currentQty - 1}
+                      step="any"
+                      required
+                      value={decreaseNewQty}
+                      onChange={(e) => setDecreaseNewQty(Number(e.target.value))}
+                      className="flex-1 px-3.5 py-2.5 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-300 dark:border-[#2a313d] rounded-xl text-center text-base font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDecreaseNewQty((prev) => Math.min(currentQty - 1, (Number(prev) || 0) + 1))}
+                      disabled={decreaseNewQty >= currentQty - 1}
+                      className="p-2.5 rounded-xl bg-zinc-100 dark:bg-[#1a1f26] hover:bg-zinc-200 dark:hover:bg-[#252c36] text-zinc-700 dark:text-zinc-300 font-bold disabled:opacity-40 cursor-pointer text-sm"
+                    >
+                      +1
+                    </button>
+                  </div>
+
+                  {/* Preset quick buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mr-1">
+                      Quick:
+                    </span>
+                    {currentQty > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setDecreaseNewQty(Math.max(1, Math.floor(currentQty / 2)))}
+                        className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-amber-500/10 hover:text-amber-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                      >
+                        Potong 50% ({Math.floor(currentQty / 2)} {decreaseModalItem.unit})
+                      </button>
+                    )}
+                    {currentQty > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => setDecreaseNewQty(Math.max(1, currentQty - 5))}
+                        className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-amber-500/10 hover:text-amber-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                      >
+                        &minus;5 {decreaseModalItem.unit}
+                      </button>
+                    )}
+                    {currentQty > 10 && (
+                      <button
+                        type="button"
+                        onClick={() => setDecreaseNewQty(Math.max(1, currentQty - 10))}
+                        className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-amber-500/10 hover:text-amber-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                      >
+                        &minus;10 {decreaseModalItem.unit}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Savings and Cost Recalculation Card */}
+                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-zinc-600 dark:text-zinc-300">Estimasi Total Biaya Baru:</span>
+                    <strong className="font-mono text-zinc-900 dark:text-white text-sm">
+                      {formatCurrency(newTotal)}
+                    </strong>
+                  </div>
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-emerald-500/20">
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
+                      <TrendingDown className="w-3.5 h-3.5" />
+                      <span>Penghematan Kas Mingguan:</span>
+                    </span>
+                    <strong className="font-mono text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
+                      +{formatCurrency(budgetSaved)}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* Reason / Notes */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                    Alasan / Justifikasi Pengurangan Kuantitas:
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 pb-1">
+                    {[
+                      'Efisiensi alokasi anggaran kas mingguan',
+                      'Rasionalisasi stok operasional site',
+                      'Stok warehouse masih mencukupi kebutuhan sementara',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setDecreaseReason(preset)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium cursor-pointer transition-all ${
+                          decreaseReason === preset
+                            ? 'bg-amber-500 text-slate-950 font-bold'
+                            : 'bg-zinc-100 dark:bg-[#1a1f26] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-[#252c36]'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    rows={2}
+                    required
+                    value={decreaseReason}
+                    onChange={(e) => setDecreaseReason(e.target.value)}
+                    placeholder="Tuliskan catatan alasan untuk HOD pemohon..."
+                    className="w-full p-2.5 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                {/* Alternative Hint */}
+                <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-[#161a20] border border-zinc-200 dark:border-[#232830] flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <span>Ingin membatalkan seluruh pengadaan barang ini?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const it = decreaseModalItem;
+                      setDecreaseModalItem(null);
+                      setRejectUrgencyModalItem({ id: it.id, name: itemName });
+                    }}
+                    className="text-red-500 hover:underline font-bold cursor-pointer ml-2"
+                  >
+                    Tolak / Hapus Item
+                  </button>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                  <button
+                    type="button"
+                    onClick={() => setDecreaseModalItem(null)}
+                    disabled={isDecreasingQty}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-800 dark:hover:text-white cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isDecreasingQty || decreaseNewQty >= currentQty || decreaseNewQty < 1}
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    <span>{isDecreasingQty ? 'Menyimpan...' : 'Konfirmasi Kurangi Qty'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -107,6 +107,21 @@ interface AppContextType {
       lifecycle_status?: ItemLifecycleStatus;
     }
   ) => Promise<void>;
+  decreaseItemQuantity: (
+    itemId: string,
+    newQuantity: number,
+    reason?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  adjustItemPrice: (
+    itemId: string,
+    newUnitPrice: number,
+    options?: {
+      price_range_min?: number;
+      price_range_max?: number;
+      reference_link?: string;
+      notes?: string;
+    }
+  ) => Promise<{ success: boolean; error?: string }>;
   approveItemUrgency: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
   batchApproveUrgency: (itemIds: string[], approved: boolean, notes?: string) => Promise<void>;
   approveItemByPm: (itemId: string, approved: boolean, notes?: string) => Promise<void>;
@@ -1128,7 +1143,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...updates,
       final_unit_price: newUnitPrice,
       estimated_total_price: newEstimatedTotal,
-      lifecycle_status: updates.lifecycle_status || 'validated',
+      lifecycle_status: updates.lifecycle_status || target?.lifecycle_status || 'validated',
     };
 
     setRequestItems((prev) =>
@@ -1136,10 +1151,162 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
-      await supabase.from('procurement_request_items').update(mergedUpdates).eq('id', itemId);
+      const { estimated_total_price, ...dbPayload } = mergedUpdates as any;
+      await supabase.from('procurement_request_items').update(dbPayload).eq('id', itemId);
     } catch (err) {
       console.error('Supabase item update error:', err);
     }
+  };
+
+  const decreaseItemQuantity = async (
+    itemId: string,
+    newQuantity: number,
+    reason?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target = requestItems.find((i) => i.id === itemId);
+    if (!target) {
+      return { success: false, error: 'Item pengadaan tidak ditemukan.' };
+    }
+
+    if (newQuantity <= 0) {
+      return {
+        success: false,
+        error: 'Kuantitas baru harus lebih dari 0. Jika ingin membatalkan/menghapus barang ini, gunakan tombol Tolak.',
+      };
+    }
+
+    if (newQuantity >= target.quantity) {
+      return {
+        success: false,
+        error: `Kuantitas baru (${newQuantity}) harus lebih kecil dari kuantitas awal (${target.quantity}).`,
+      };
+    }
+
+    const unitPrice = target.final_unit_price || target.routine_item?.estimated_unit_price || 0;
+    const newEstimatedTotal = newQuantity * unitPrice;
+    const noteText = reason?.trim()
+      ? `[Finance: Qty dikurangi dari ${target.quantity} -> ${newQuantity} ${target.unit}. Alasan: ${reason.trim()}]`
+      : `[Finance: Qty dikurangi dari ${target.quantity} -> ${newQuantity} ${target.unit}]`;
+    const updatedNotes = target.pm_item_approval_notes
+      ? `${target.pm_item_approval_notes} | ${noteText}`
+      : noteText;
+
+    const mergedUpdates = {
+      quantity: newQuantity,
+      estimated_total_price: newEstimatedTotal,
+      pm_item_approval_notes: updatedNotes,
+    };
+
+    setRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
+    );
+
+    try {
+      await supabase
+        .from('procurement_request_items')
+        .update({
+          quantity: newQuantity,
+          pm_item_approval_notes: updatedNotes,
+        })
+        .eq('id', itemId);
+    } catch (err: any) {
+      console.error('Supabase decreaseItemQuantity error:', err);
+    }
+
+    const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+    const notif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      department_id: target.department_id,
+      title: 'Kuantitas Barang Disesuaikan oleh Finance',
+      message: `Admin Finance telah mengurangi kuantitas ${itemName} (${target.department_name || 'Departemen'}) dari ${target.quantity} menjadi ${newQuantity} ${target.unit}.${reason?.trim() ? ` Alasan: "${reason.trim()}"` : ''}`,
+      type: 'general',
+      related_item_id: itemId,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    setNotifications((prev) => [notif, ...prev]);
+
+    return { success: true };
+  };
+
+  const adjustItemPrice = async (
+    itemId: string,
+    newUnitPrice: number,
+    options?: {
+      price_range_min?: number;
+      price_range_max?: number;
+      reference_link?: string;
+      notes?: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target = requestItems.find((i) => i.id === itemId);
+    if (!target) {
+      return { success: false, error: 'Item pengadaan tidak ditemukan.' };
+    }
+
+    if (newUnitPrice < 0) {
+      return { success: false, error: 'Harga satuan tidak boleh bernilai negatif.' };
+    }
+
+    const newEstimatedTotal = (target.quantity || 1) * newUnitPrice;
+    const noteText = options?.notes?.trim()
+      ? `[Logistik penyesuaian harga: ${formatCurrency(newUnitPrice)}/unit. Catatan: ${options.notes.trim()}]`
+      : undefined;
+    const updatedLogisticsNotes = noteText
+      ? target.logistics_notes
+        ? `${target.logistics_notes} | ${noteText}`
+        : noteText
+      : target.logistics_notes;
+
+    const mergedUpdates: Partial<ProcurementRequestItem> = {
+      final_unit_price: newUnitPrice,
+      estimated_total_price: newEstimatedTotal,
+      logistics_notes: updatedLogisticsNotes,
+    };
+
+    if (options?.price_range_min !== undefined) {
+      mergedUpdates.price_range_min = options.price_range_min;
+    }
+    if (options?.price_range_max !== undefined) {
+      mergedUpdates.price_range_max = options.price_range_max;
+    }
+    if (options?.reference_link !== undefined) {
+      mergedUpdates.reference_link = options.reference_link;
+    }
+
+    // If item was draft or submitted, auto-transition to validated when price is adjusted
+    if (target.lifecycle_status === 'draft' || target.lifecycle_status === 'submitted') {
+      mergedUpdates.lifecycle_status = 'validated';
+    }
+
+    setRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
+    );
+
+    try {
+      const { estimated_total_price, ...dbPayload } = mergedUpdates as any;
+      await supabase
+        .from('procurement_request_items')
+        .update(dbPayload)
+        .eq('id', itemId);
+    } catch (err: any) {
+      console.error('Supabase adjustItemPrice error:', err);
+    }
+
+    const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+    const notif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      department_id: target.department_id,
+      title: 'Penyesuaian Harga oleh Logistik',
+      message: `Admin Logistik telah menyesuaikan harga ${itemName} (${target.department_name || 'Departemen'}) menjadi ${formatCurrency(newUnitPrice)} / ${target.unit}.${options?.notes?.trim() ? ` Catatan: "${options.notes.trim()}"` : ''}`,
+      type: 'general',
+      related_item_id: itemId,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    };
+    setNotifications((prev) => [notif, ...prev]);
+
+    return { success: true };
   };
 
   const approveItemUrgency = async (itemId: string, approved: boolean, notes?: string) => {
@@ -1521,6 +1688,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         submitRequestItems,
         batchUploadProcurementItems,
         updateItemLogistics,
+        decreaseItemQuantity,
+        adjustItemPrice,
         approveItemUrgency,
         batchApproveUrgency,
         approveItemByPm,
