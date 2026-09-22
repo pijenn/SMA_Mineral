@@ -112,6 +112,11 @@ interface AppContextType {
     newQuantity: number,
     reason?: string
   ) => Promise<{ success: boolean; error?: string }>;
+  adjustItemQuantity: (
+    itemId: string,
+    newQuantity: number,
+    reason?: string
+  ) => Promise<{ success: boolean; error?: string }>;
   adjustItemPrice: (
     itemId: string,
     newUnitPrice: number,
@@ -1158,7 +1163,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const decreaseItemQuantity = async (
+  const adjustItemQuantity = async (
     itemId: string,
     newQuantity: number,
     reason?: string
@@ -1171,22 +1176,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (newQuantity <= 0) {
       return {
         success: false,
-        error: 'Kuantitas baru harus lebih dari 0. Jika ingin membatalkan/menghapus barang ini, gunakan tombol Tolak.',
+        error: 'Kuantitas baru harus lebih dari 0. Jika ingin membatalkan/menolak barang ini, gunakan tombol Tolak.',
       };
     }
 
-    if (newQuantity >= target.quantity) {
+    if (newQuantity === target.quantity) {
       return {
         success: false,
-        error: `Kuantitas baru (${newQuantity}) harus lebih kecil dari kuantitas awal (${target.quantity}).`,
+        error: `Kuantitas baru (${newQuantity}) sama dengan kuantitas awal. Masukkan jumlah yang berbeda untuk menyesuaikan.`,
       };
     }
+
+    const isIncrease = newQuantity > target.quantity;
+    const actionLabel = isIncrease ? 'ditambah' : 'dikurangi';
+    const actionVerb = isIncrease ? 'menambah' : 'mengurangi';
 
     const unitPrice = target.final_unit_price || target.routine_item?.estimated_unit_price || 0;
     const newEstimatedTotal = newQuantity * unitPrice;
     const noteText = reason?.trim()
-      ? `[Finance: Qty dikurangi dari ${target.quantity} -> ${newQuantity} ${target.unit}. Alasan: ${reason.trim()}]`
-      : `[Finance: Qty dikurangi dari ${target.quantity} -> ${newQuantity} ${target.unit}]`;
+      ? `[Finance: Qty ${actionLabel} dari ${target.quantity} -> ${newQuantity} ${target.unit}. Alasan: ${reason.trim()}]`
+      : `[Finance: Qty ${actionLabel} dari ${target.quantity} -> ${newQuantity} ${target.unit}]`;
     const updatedNotes = target.pm_item_approval_notes
       ? `${target.pm_item_approval_notes} | ${noteText}`
       : noteText;
@@ -1209,8 +1218,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           pm_item_approval_notes: updatedNotes,
         })
         .eq('id', itemId);
-    } catch (err: any) {
-      console.error('Supabase decreaseItemQuantity error:', err);
+    } catch (err: unknown) {
+      console.error('Supabase adjustItemQuantity error:', err);
     }
 
     const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
@@ -1218,7 +1227,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       id: `notif-${Date.now()}`,
       department_id: target.department_id,
       title: 'Kuantitas Barang Disesuaikan oleh Finance',
-      message: `Admin Finance telah mengurangi kuantitas ${itemName} (${target.department_name || 'Departemen'}) dari ${target.quantity} menjadi ${newQuantity} ${target.unit}.${reason?.trim() ? ` Alasan: "${reason.trim()}"` : ''}`,
+      message: `Admin Finance telah ${actionVerb} kuantitas ${itemName} (${target.department_name || 'Departemen'}) dari ${target.quantity} menjadi ${newQuantity} ${target.unit}.${reason?.trim() ? ` Alasan: "${reason.trim()}"` : ''}`,
       type: 'general',
       related_item_id: itemId,
       is_read: false,
@@ -1228,6 +1237,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     return { success: true };
   };
+
+  const decreaseItemQuantity = adjustItemQuantity;
 
   const adjustItemPrice = async (
     itemId: string,
@@ -1689,6 +1700,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         batchUploadProcurementItems,
         updateItemLogistics,
         decreaseItemQuantity,
+        adjustItemQuantity,
         adjustItemPrice,
         approveItemUrgency,
         batchApproveUrgency,
