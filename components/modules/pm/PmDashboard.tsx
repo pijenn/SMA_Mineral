@@ -34,6 +34,8 @@ import {
   Building2,
   Receipt,
   FileSpreadsheet,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 
 export type PmTabType = 'buy_approval' | 'rollover' | 'approval_summary' | 'final_report';
@@ -55,6 +57,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
     financeReport,
     approveBuyByPm,
     approveFinanceReportByPm,
+    allocateDelayedItem,
   } = useApp();
 
   const [localTab, setLocalTab] = useState<PmTabType>(
@@ -76,6 +79,8 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const [allocateFeedback, setAllocateFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const handleDownloadExcel = () => {
     try {
@@ -161,7 +166,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
   );
 
   const backlogItems = deptItems.filter(
-    (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week' || i.is_rollover
+    (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week'
   );
 
   const handleConfirmReject = (e: React.FormEvent) => {
@@ -172,8 +177,34 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
     setRejectReason('');
   };
 
-  const handleAllocateRollover = (itemId: string) => {
-    approveBuyByPm(itemId, true, 'Dialokasikan menggunakan saldo surplus kas mingguan.');
+  const handleAllocateRollover = async (itemId: string) => {
+    try {
+      setAllocatingId(itemId);
+      setAllocateFeedback(null);
+      const res = await allocateDelayedItem(
+        itemId,
+        'Dialokasikan menggunakan saldo kas periode ini ke Step 3 (Approval Finance).'
+      );
+      setAllocatingId(null);
+      if (res.success) {
+        setAllocateFeedback({
+          type: 'success',
+          message: 'Barang tertunda berhasil dialokasikan dan dikirim ke Step 3 (Approval Finance).',
+        });
+        setTimeout(() => setAllocateFeedback(null), 5000);
+      } else {
+        setAllocateFeedback({
+          type: 'error',
+          message: res.error || 'Gagal mengalokasikan barang.',
+        });
+      }
+    } catch (err: any) {
+      setAllocatingId(null);
+      setAllocateFeedback({
+        type: 'error',
+        message: err?.message || 'Terjadi kesalahan saat mengalokasikan barang.',
+      });
+    }
   };
 
   return (
@@ -496,7 +527,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
       {/* Tab: Alokasi Surplus Rollover */}
       {currentTab === 'rollover' && (
         <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs">
-          <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex items-center justify-between">
+          <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                 Daftar Barang Tertunda (Backlog Defisit Kas)
@@ -505,7 +536,27 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
                 Surplus Kas Tersedia: <strong className="text-emerald-500 font-mono">{formatCurrency(remainingCash > 0 ? remainingCash : 0)}</strong>
               </p>
             </div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              Total Tertunda: <strong className="text-amber-500 font-bold">{backlogItems.length} Barang</strong>
+            </div>
           </div>
+
+          {allocateFeedback && (
+            <div
+              className={`m-4 p-3.5 rounded-xl border text-xs flex items-center gap-2.5 ${
+                allocateFeedback.type === 'success'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+              }`}
+            >
+              {allocateFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0" />
+              )}
+              <span>{allocateFeedback.message}</span>
+            </div>
+          )}
 
           <div className="divide-y divide-zinc-200 dark:divide-[#232830]">
             {backlogItems.length === 0 ? (
@@ -523,28 +574,61 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
                     key={item.id}
                     className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-zinc-50/60 dark:hover:bg-[#181c22] transition-colors"
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-1.5 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">
                           Dept: <strong className="text-zinc-800 dark:text-zinc-200">{item.department_name}</strong>
                         </span>
                         <PriorityBadge level={item.priority_level} showFull />
                         <LifecycleBadge status={item.lifecycle_status} />
+                        {item.period_name && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+                            Asal: {item.period_name}
+                          </span>
+                        )}
+                        {item.is_rollover && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            Rollover
+                          </span>
+                        )}
                       </div>
                       <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
                         {itemName}
                       </h4>
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                        Kebutuhan Biaya: <strong className="text-zinc-800 dark:text-zinc-200 font-mono">{formatCurrency(totalCost)}</strong>
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-4">
+                        <span>
+                          Jumlah: <strong className="text-zinc-800 dark:text-zinc-200">{item.quantity} {item.unit}</strong>
+                        </span>
+                        <span>
+                          Kebutuhan Biaya:{' '}
+                          <strong className="text-zinc-800 dark:text-zinc-200 font-mono">
+                            {formatCurrency(totalCost)}
+                          </strong>
+                        </span>
                       </div>
+                      {item.pm_buy_approval_notes && (
+                        <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-lg inline-block">
+                          Alasan Tertunda: {item.pm_buy_approval_notes}
+                        </div>
+                      )}
                     </div>
 
                     <button
                       onClick={() => handleAllocateRollover(item.id)}
-                      className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      disabled={allocatingId === item.id}
+                      className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Alokasikan Kas Sekarang</span>
+                      {allocatingId === item.id ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Mengalokasikan...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Alokasi Kas Sekarang</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 );

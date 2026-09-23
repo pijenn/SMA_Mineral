@@ -148,6 +148,7 @@ interface AppContextType {
   ) => Promise<void>;
   confirmSiteReceipt: (itemId: string, notes?: string) => Promise<void>;
   deferItemDeficit: (itemId: string, reason: string) => Promise<void>;
+  allocateDelayedItem: (itemId: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
   updatePeriodCash: (updates: {
     disbursed_budget?: number;
     previous_rollover_balance?: number;
@@ -311,7 +312,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           };
         });
         setAllRequestItems(mapped);
-        setRequestItems(mapped.filter((i) => i.origin_period_id === currentActive.id));
+        setRequestItems(filterPeriodRequestItems(mapped, currentActive.id));
       } else if (reqErr) {
         console.warn('Procurement request items fetch warning:', reqErr);
       }
@@ -348,6 +349,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Helper to filter request items for active period, including uncompleted delayed items from previous periods
+  const filterPeriodRequestItems = (items: ProcurementRequestItem[], periodId: string): ProcurementRequestItem[] => {
+    return items.filter((i) => {
+      // Direct items of the active period
+      if (i.origin_period_id === periodId) return true;
+      // Items not canceled from weeks before but delayed for the next week
+      const isPastPeriod = i.origin_period_id !== periodId;
+      const isDelayed = i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week';
+      const isNotCancelledOrDone =
+        i.lifecycle_status !== 'pm_item_rejected' &&
+        i.lifecycle_status !== 'purchased' &&
+        i.lifecycle_status !== 'processing_delivery' &&
+        i.lifecycle_status !== 'in_transit' &&
+        i.lifecycle_status !== 'received_at_site';
+      return isPastPeriod && isDelayed && isNotCancelledOrDone;
+    });
+  };
+
   useEffect(() => {
     loadData();
   }, []);
@@ -355,9 +374,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Filter items and transactions dynamically when activePeriod changes
   useEffect(() => {
     if (activePeriod && activePeriod.id) {
-      setRequestItems(
-        allRequestItems.filter((i) => i.origin_period_id === activePeriod.id)
-      );
+      setRequestItems(filterPeriodRequestItems(allRequestItems, activePeriod.id));
       setTransactions(allTransactions.filter((t) => t.period_id === activePeriod.id));
     }
   }, [activePeriod.id, allRequestItems, allTransactions]);
@@ -1579,6 +1596,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       is_rollover: true,
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
@@ -1587,6 +1607,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('procurement_request_items').update(updates).eq('id', itemId);
     } catch (err) {
       console.error('Supabase defer deficit error:', err);
+    }
+  };
+
+  const allocateDelayedItem = async (
+    itemId: string,
+    notes?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const target = allRequestItems.find((i) => i.id === itemId) || requestItems.find((i) => i.id === itemId);
+      if (!target) {
+        return { success: false, error: 'Item tidak ditemukan.' };
+      }
+
+      const updates: Partial<ProcurementRequestItem> = {
+        origin_period_id: activePeriod.id,
+        period_name: activePeriod.period_name,
+        lifecycle_status: 'validated' as ItemLifecycleStatus, // Step 3: Approval Finance
+        pm_item_approval: 'pending' as const, // Ready for Finance urgency review
+        pm_buy_approval: 'pending' as const,
+        is_rollover: true,
+        pm_buy_approval_notes: notes || `Dialokasikan kas oleh PM ke periode ${activePeriod.period_name}. Masuk Step 3 (Approval Finance).`,
+      };
+
+      // Optimistically update local state
+      setAllRequestItems((prev) =>
+        prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+      );
+      setRequestItems((prev) =>
+        prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+      );
+
+      // Persist to Supabase
+      try {
+        await supabase
+          .from('procurement_request_items')
+          .update({
+            origin_period_id: activePeriod.id,
+            lifecycle_status: 'validated',
+            pm_item_approval: 'pending',
+            pm_buy_approval: 'pending',
+            is_rollover: true,
+            pm_buy_approval_notes: updates.pm_buy_approval_notes,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', itemId);
+      } catch (dbErr) {
+        console.error('Supabase allocateDelayedItem error:', dbErr);
+      }
+
+      // Create notification
+      const itemName = target.custom_item_name || target.routine_item?.name || 'Item Pengadaan';
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        title: 'Alokasi Kas Barang Tertunda Berhasil',
+        message: `${itemName} (${target.department_name || 'Departemen'}) telah dialokasikan kas oleh PM dan dikirim ke Step 3 (Approval Finance).`,
+        type: 'approval_request',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error allocating delayed item:', err);
+      return { success: false, error: err?.message || 'Gagal mengalokasikan kas untuk barang tertunda.' };
     }
   };
 
@@ -1711,6 +1796,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updateDeliveryStatus,
         confirmSiteReceipt,
         deferItemDeficit,
+        allocateDelayedItem,
         updatePeriodCash,
         submitFinanceReport,
         approveFinanceReportByPm,

@@ -1031,6 +1031,11 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                           </span>
                           <PriorityBadge level={item.priority_level} showFull />
                           <LifecycleBadge status={item.lifecycle_status} />
+                          {item.is_rollover && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                              Barang Tertunda (Rollover)
+                            </span>
+                          )}
                           {routine?.item_code && (
                             <span className="px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-[#1f242c] text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
                               {routine.item_code}
@@ -1077,6 +1082,12 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                         {item.pm_item_approval_notes && (
                           <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block">
                             Catatan Finance: {item.pm_item_approval_notes}
+                          </div>
+                        )}
+
+                        {item.pm_buy_approval_notes && (
+                          <div className="text-[11px] text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded-lg inline-block">
+                            Alokasi PM: {item.pm_buy_approval_notes}
                           </div>
                         )}
                       </div>

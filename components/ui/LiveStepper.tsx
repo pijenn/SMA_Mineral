@@ -99,13 +99,15 @@ export function LiveStepper({
   const isDeferred = status === 'deferred_deficit' || status === 'deferred_next_week';
   const isRejected = status === 'pm_item_rejected';
 
+  const isAllDelivered = status === 'received_at_site' || deliveryStatus === 'delivered';
+
   if (isCompact) {
     return (
       <div className="flex items-center gap-1.5 py-1">
         {STEPS.map((step, idx) => {
           const stepNum = idx + 1;
-          const isComplete = stepNum <= currentStep;
-          const isCurrent = stepNum === currentStep;
+          const isComplete = isAllDelivered ? idx <= currentStep : idx < currentStep;
+          const isCurrent = !isAllDelivered && idx === currentStep;
 
           let colorClass = 'bg-zinc-200 text-zinc-600 dark:bg-[#1f242c] dark:text-zinc-400 border border-zinc-300 dark:border-[#2d3440]';
           if (isComplete) {
@@ -113,11 +115,11 @@ export function LiveStepper({
           } else if (isCurrent) {
             colorClass = 'bg-blue-600 text-white font-bold border-blue-500 ring-2 ring-blue-500/20';
           }
-          if (isDeferred && stepNum === 3) {
-            colorClass = 'bg-amber-500 text-slate-950 border-amber-600';
+          if (isDeferred && idx === 2) {
+            colorClass = 'bg-amber-500 text-slate-950 border-amber-600 font-bold';
           }
-          if (isRejected && stepNum === 3) {
-            colorClass = 'bg-red-500 text-white border-red-600';
+          if (isRejected && idx === 2) {
+            colorClass = 'bg-red-500 text-white border-red-600 font-bold';
           }
 
           return (
@@ -126,12 +128,12 @@ export function LiveStepper({
                 title={`${step.title}: ${step.description}`}
                 className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] ${colorClass}`}
               >
-                {isComplete && stepNum < 6 ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : stepNum}
+                {isComplete ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : stepNum}
               </div>
               {idx < STEPS.length - 1 && (
                 <div
                   className={`h-0.5 w-3 rounded-full ${
-                    stepNum < currentStep ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-[#252b35]'
+                    idx < currentStep ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-[#252b35]'
                   }`}
                 />
               )}
@@ -156,13 +158,29 @@ export function LiveStepper({
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
         {STEPS.map((step, idx) => {
           const stepNum = idx + 1;
-          const isComplete = stepNum <= currentStep;
-          const isCurrent = stepNum === currentStep;
+          const isComplete = isAllDelivered ? idx <= currentStep : idx < currentStep;
+          const isCurrent = !isAllDelivered && idx === currentStep;
 
           let stateClass = 'border border-zinc-200 dark:border-[#232830] bg-white dark:bg-[#14171c] text-zinc-500';
           let iconBg = 'bg-zinc-100 dark:bg-[#1e232b] text-zinc-500 dark:text-zinc-400';
+          let statusLabel = isComplete ? 'Selesai' : isCurrent ? 'Diproses' : 'Menunggu';
+          let badgeClass = isComplete
+            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+            : isCurrent
+            ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/20'
+            : 'bg-zinc-100 dark:bg-[#1e232b] text-zinc-500 dark:text-zinc-400';
 
-          if (isComplete) {
+          if (isDeferred && idx === 2) {
+            stateClass = 'border border-amber-500/50 bg-amber-500/5 dark:bg-amber-500/10 text-amber-950 dark:text-amber-100 ring-2 ring-amber-500/20';
+            iconBg = 'bg-amber-500 text-slate-950';
+            statusLabel = 'Ditunda (Defisit)';
+            badgeClass = 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20';
+          } else if (isRejected && idx === 2) {
+            stateClass = 'border border-red-500/50 bg-red-500/5 dark:bg-red-500/10 text-red-950 dark:text-red-100 ring-2 ring-red-500/20';
+            iconBg = 'bg-red-500 text-white';
+            statusLabel = 'Ditolak';
+            badgeClass = 'bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/20';
+          } else if (isComplete) {
             stateClass = 'border border-emerald-500/40 bg-emerald-500/5 dark:bg-emerald-500/10 text-emerald-950 dark:text-emerald-200 shadow-xs';
             iconBg = 'bg-emerald-500 text-slate-950';
           } else if (isCurrent) {
@@ -179,22 +197,14 @@ export function LiveStepper({
             >
               <div className="flex items-center justify-between mb-2">
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${iconBg}`}>
-                  {isComplete && stepNum < 6 ? (
+                  {isComplete ? (
                     <Check className="w-4 h-4 stroke-[2.5]" />
                   ) : (
                     <IconComponent className="w-3.5 h-3.5" />
                   )}
                 </div>
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    isComplete
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                      : isCurrent
-                      ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/20'
-                      : 'bg-zinc-100 dark:bg-[#1e232b] text-zinc-500 dark:text-zinc-400'
-                  }`}
-                >
-                  {isComplete ? 'Selesai' : isCurrent ? 'Diproses' : 'Menunggu'}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}`}>
+                  {statusLabel}
                 </span>
               </div>
               <h4 className="text-xs font-bold text-zinc-900 dark:text-white mb-0.5">

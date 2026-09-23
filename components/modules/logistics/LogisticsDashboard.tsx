@@ -117,7 +117,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const inTransitCount = deptItems.filter((i) => i.delivery_status === 'in_transit').length;
   const completedCount = deptItems.filter((i) => i.lifecycle_status === 'received_at_site').length;
   const backlogCount = deptItems.filter(
-    (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week' || i.is_rollover
+    (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week'
   ).length;
 
   // Filters
@@ -155,8 +155,17 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         matchesDept &&
         matchesPriority &&
         (item.lifecycle_status === 'deferred_deficit' ||
-          item.lifecycle_status === 'deferred_next_week' ||
-          item.is_rollover)
+          item.lifecycle_status === 'deferred_next_week')
+      );
+    }
+
+    if (currentTab === 'pipeline') {
+      return (
+        matchesSearch &&
+        matchesDept &&
+        matchesPriority &&
+        item.lifecycle_status !== 'deferred_deficit' &&
+        item.lifecycle_status !== 'deferred_next_week'
       );
     }
 
