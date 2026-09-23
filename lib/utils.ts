@@ -95,7 +95,7 @@ export function getLifecycleStatusMeta(status: ItemLifecycleStatus) {
     case 'finance_budgeted':
       return { label: 'Alokasi Finance (Siap Beli)', color: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20' };
     case 'pm_buy_approved':
-      return { label: 'Otorisasi Beli Disetujui PM', color: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' };
+      return { label: 'Otorisasi PM & Proses Checkout', color: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' };
     case 'deferred_deficit':
       return { label: 'Tertunda (Defisit Kas)', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20' };
     case 'purchased':

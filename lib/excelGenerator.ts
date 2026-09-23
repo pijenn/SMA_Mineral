@@ -352,7 +352,7 @@ export function generateDepartmentApprovalExcel({
 
       const pmStatus =
         item.pm_buy_approval === 'approved'
-          ? 'Otorisasi Beli Disetujui'
+          ? 'Otorisasi PM & Proses Checkout'
           : item.pm_item_approval === 'approved'
           ? 'Urgensi Item Disetujui'
           : 'Disetujui PM';

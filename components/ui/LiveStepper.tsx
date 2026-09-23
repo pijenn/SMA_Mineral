@@ -40,8 +40,8 @@ const STEPS: StepDefinition[] = [
   },
   {
     id: 'buy',
-    title: '4. Otorisasi PM & PO',
-    description: 'Otorisasi beli oleh PM & eksekusi pembelian',
+    title: '4. Otorisasi PM & Proses Checkout',
+    description: 'Otorisasi PM & proses checkout pembelian',
     icon: Check,
   },
   {

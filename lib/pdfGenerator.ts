@@ -290,7 +290,7 @@ export function generateWeeklyReportPdf({
   doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
   const tableTitle = isApprovedFallback
-    ? 'DAFTAR ITEM PENGADAAN (DISETUJUI OTORISASI BELI PM)'
+    ? 'DAFTAR ITEM PENGADAAN (OTORISASI PM & PROSES CHECKOUT)'
     : 'RINCIAN REALISASI PEMBELIAN BARANG (WEEKLY INVOICE ITEMS)';
   doc.text(tableTitle, marginX, currentY);
 
