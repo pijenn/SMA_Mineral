@@ -547,7 +547,7 @@ export function RequestModal({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                           <input
                             type="number"
                             min={0}
-                            step="1000"
+                            step="100"
                             placeholder="Contoh: 250000"
                             value={row.estimated_unit_price || ''}
                             onChange={(e) =>
