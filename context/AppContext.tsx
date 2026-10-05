@@ -164,6 +164,10 @@ interface AppContextType {
     start_date: string;
     end_date: string;
   }) => Promise<{ success: boolean; error?: string }>;
+  clearAllRequests: (options?: {
+    periodId?: string;
+    departmentId?: string;
+  }) => Promise<{ success: boolean; count: number; error?: string }>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
 }
@@ -292,7 +296,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             procurement_periods(id, period_name)
           )
         `)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(10000);
 
       if (reqData && reqData.length > 0) {
         const mapped: ProcurementRequestItem[] = reqData.map((row: any) => {
@@ -321,7 +326,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { data: txData } = await supabase
         .from('purchase_transactions')
         .select('*, proofs:purchase_proofs(*)')
-        .order('purchase_date', { ascending: false });
+        .order('purchase_date', { ascending: false })
+        .limit(5000);
       if (txData && txData.length > 0) {
         setAllTransactions(txData);
         setTransactions(txData.filter((t: any) => t.period_id === currentActive.id));
@@ -331,7 +337,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { data: jData } = await supabase
         .from('financial_journal_entries')
         .select('*')
-        .order('entry_date', { ascending: false });
+        .order('entry_date', { ascending: false })
+        .limit(5000);
       if (jData && jData.length > 0) {
         setJournalEntries(jData);
       }
@@ -340,7 +347,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { data: notifData } = await supabase
         .from('notifications')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(1000);
       if (notifData && notifData.length > 0) {
         setNotifications(notifData);
       }
@@ -349,22 +357,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Helper to filter request items for active period, including uncompleted delayed items from previous periods
+  // Helper to filter request items strictly for active period
   const filterPeriodRequestItems = (items: ProcurementRequestItem[], periodId: string): ProcurementRequestItem[] => {
-    return items.filter((i) => {
-      // Direct items of the active period
-      if (i.origin_period_id === periodId) return true;
-      // Items not canceled from weeks before but delayed for the next week
-      const isPastPeriod = i.origin_period_id !== periodId;
-      const isDelayed = i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week';
-      const isNotCancelledOrDone =
-        i.lifecycle_status !== 'pm_item_rejected' &&
-        i.lifecycle_status !== 'purchased' &&
-        i.lifecycle_status !== 'processing_delivery' &&
-        i.lifecycle_status !== 'in_transit' &&
-        i.lifecycle_status !== 'received_at_site';
-      return isPastPeriod && isDelayed && isNotCancelledOrDone;
-    });
+    return items.filter((i) => i.origin_period_id === periodId);
   };
 
   useEffect(() => {
@@ -1168,6 +1163,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lifecycle_status: updates.lifecycle_status || target?.lifecycle_status || 'validated',
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
     );
@@ -1223,6 +1221,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pm_item_approval_notes: updatedNotes,
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
     );
@@ -1307,6 +1308,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       mergedUpdates.lifecycle_status = 'validated';
     }
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...mergedUpdates } : item))
     );
@@ -1344,6 +1348,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lifecycle_status: (approved ? 'pm_item_approved' : 'pm_item_rejected') as ItemLifecycleStatus,
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
@@ -1363,6 +1370,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lifecycle_status: (approved ? 'pm_item_approved' : 'pm_item_rejected') as ItemLifecycleStatus,
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (itemIds.includes(item.id) ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (itemIds.includes(item.id) ? { ...item, ...updates } : item))
     );
@@ -1393,6 +1403,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lifecycle_status: (approved ? 'pm_buy_approved' : 'deferred_deficit') as ItemLifecycleStatus,
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
@@ -1441,6 +1454,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAllTransactions((prev) => [newTx, ...prev]);
     setTransactions((prev) => [newTx, ...prev]);
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => {
+        if (!itemIds.includes(item.id)) return item;
+        return {
+          ...item,
+          lifecycle_status: 'purchased',
+          delivery_status: 'processing',
+        };
+      })
+    );
     setRequestItems((prev) =>
       prev.map((item) => {
         if (!itemIds.includes(item.id)) return item;
@@ -1559,6 +1582,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : {}),
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
@@ -1578,6 +1604,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       receipt_notes: notes || 'Terkonfirmasi fisik diterima di warehouse site tambang.',
     };
 
+    setAllRequestItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
+    );
     setRequestItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, ...updates } : item))
     );
@@ -1745,6 +1774,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
   };
 
+  const clearAllRequests = async (options?: {
+    periodId?: string;
+    departmentId?: string;
+  }): Promise<{ success: boolean; count: number; error?: string }> => {
+    try {
+      const targetPeriodId = options?.periodId || activePeriod.id;
+      const targetDeptId = options?.departmentId && options.departmentId !== 'ALL' && options.departmentId !== 'all'
+        ? options.departmentId
+        : null;
+
+      // Identify items matching targetPeriodId and (optionally) targetDeptId
+      const itemsToDelete = allRequestItems.filter((item) => {
+        const matchesPeriod = item.origin_period_id === targetPeriodId;
+        const matchesDept = targetDeptId ? item.department_id === targetDeptId : true;
+        return matchesPeriod && matchesDept;
+      });
+
+      if (itemsToDelete.length === 0) {
+        return { success: true, count: 0 };
+      }
+
+      const itemIdsToDelete = itemsToDelete.map((i) => i.id);
+
+      // Optimistically update React states
+      setAllRequestItems((prev) => prev.filter((i) => !itemIdsToDelete.includes(i.id)));
+      setRequestItems((prev) => prev.filter((i) => !itemIdsToDelete.includes(i.id)));
+
+      // Delete from Supabase in chunks
+      for (let i = 0; i < itemIdsToDelete.length; i += 50) {
+        const chunk = itemIdsToDelete.slice(i, i + 50);
+        const { error: delErr } = await supabase
+          .from('procurement_request_items')
+          .delete()
+          .in('id', chunk);
+
+        if (delErr) {
+          console.error('Supabase clear items error:', delErr);
+        }
+      }
+
+      const targetPeriod = periods.find((p) => p.id === targetPeriodId) || activePeriod;
+      const deptObj = targetDeptId ? departments.find((d) => d.id === targetDeptId) : null;
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        title: 'Semua Request Dibersihkan',
+        message: `${itemsToDelete.length} item pengadaan ${deptObj ? `departemen ${deptObj.name} ` : ''}pada ${targetPeriod.period_name} telah dihapus/dibersihkan oleh Admin Logistik.`,
+        type: 'general',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+
+      return { success: true, count: itemsToDelete.length };
+    } catch (err: any) {
+      console.error('Error clearing requests:', err);
+      return { success: false, count: 0, error: err?.message || 'Gagal membersihkan request.' };
+    }
+  };
+
   const markNotificationRead = (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
@@ -1802,6 +1890,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         approveFinanceReportByPm,
         switchPeriod,
         createAndSwitchPeriod,
+        clearAllRequests,
         markNotificationRead,
         markAllNotificationsRead,
       }}

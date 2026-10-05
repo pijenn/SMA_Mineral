@@ -34,6 +34,7 @@ import {
   CheckCircle,
   TrendingUp,
   TrendingDown,
+  Trash2,
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 
@@ -54,12 +55,19 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     recordPurchase,
     updateDeliveryStatus,
     deferItemDeficit,
+    clearAllRequests,
     selectedDepartmentId,
     setSelectedDepartmentId,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('ALL');
+
+  // Clear Request state
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [isClearingRequests, setIsClearingRequests] = useState(false);
+  const [clearScope, setClearScope] = useState<'current_period' | 'current_dept'>('current_period');
+  const [clearFeedback, setClearFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Internal tab state if not driven by parent
   const [localTab, setLocalTab] = useState<'pipeline' | 'purchasing' | 'delivery' | 'backlog'>(activeTab);
@@ -337,6 +345,32 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     setDeliveryModalItem(null);
   };
 
+  const handleConfirmClearRequests = async () => {
+    setIsClearingRequests(true);
+    setClearFeedback(null);
+    const targetDept = clearScope === 'current_dept' && !isAllDept ? selectedDepartmentId : undefined;
+    const res = await clearAllRequests({
+      periodId: activePeriod.id,
+      departmentId: targetDept,
+    });
+    setIsClearingRequests(false);
+    if (res.success) {
+      setClearFeedback({
+        type: 'success',
+        message: `Berhasil menghapus ${res.count} request barang.`,
+      });
+      setTimeout(() => {
+        setIsClearModalOpen(false);
+        setClearFeedback(null);
+      }, 1200);
+    } else {
+      setClearFeedback({
+        type: 'error',
+        message: res.error || 'Gagal menghapus request barang.',
+      });
+    }
+  };
+
   return (
     <div className="space-y-8">
       {/* Section Header */}
@@ -356,6 +390,19 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setClearFeedback(null);
+              setIsClearModalOpen(true);
+            }}
+            className="px-3.5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 active:bg-rose-500/30 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+            title="Bersihkan seluruh request barang di periode ini"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Clear Request ({deptItems.length})</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsImportModalOpen(true)}
@@ -1519,6 +1566,147 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           </div>
         );
       })()}
+
+      {/* Clear Requests Confirmation Modal */}
+      {isClearModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-[#14171c] rounded-2xl shadow-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex items-center justify-between bg-zinc-50 dark:bg-[#0e1115]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-zinc-900 dark:text-white">
+                    Clear Semua Request Barang
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    {activePeriod.period_name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsClearModalOpen(false)}
+                disabled={isClearingRequests}
+                className="p-2 rounded-xl text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-[#1c222a] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              {clearFeedback && (
+                <div
+                  className={`p-3 rounded-xl border flex items-center gap-2 font-medium ${
+                    clearFeedback.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'
+                  }`}
+                >
+                  {clearFeedback.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                  )}
+                  <span>{clearFeedback.message}</span>
+                </div>
+              )}
+
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-200 leading-relaxed">
+                <p className="font-bold flex items-center gap-1.5 mb-1 text-amber-700 dark:text-amber-300">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  Peringatan Tindakan Permanen
+                </p>
+                Tindakan ini akan menghapus request barang yang terdaftar pada periode aktif. Item yang telah terhapus tidak dapat dikembalikan.
+              </div>
+
+              {!isAllDept && (
+                <div className="space-y-2">
+                  <label className="font-bold text-zinc-700 dark:text-zinc-300 block">
+                    Pilih Cakupan Penghapusan:
+                  </label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl border border-zinc-200 dark:border-[#232830] cursor-pointer hover:bg-zinc-50 dark:hover:bg-[#1a1f26]">
+                      <input
+                        type="radio"
+                        name="clearScope"
+                        checked={clearScope === 'current_dept'}
+                        onChange={() => setClearScope('current_dept')}
+                        className="text-rose-600 focus:ring-rose-500"
+                      />
+                      <div>
+                        <span className="font-bold text-zinc-900 dark:text-white block">
+                          Hanya Departemen yang Dipilih ({deptItems.length} item)
+                        </span>
+                        <span className="text-[11px] text-zinc-500">
+                          {departments.find((d) => d.id === selectedDepartmentId)?.name}
+                        </span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl border border-zinc-200 dark:border-[#232830] cursor-pointer hover:bg-zinc-50 dark:hover:bg-[#1a1f26]">
+                      <input
+                        type="radio"
+                        name="clearScope"
+                        checked={clearScope === 'current_period'}
+                        onChange={() => setClearScope('current_period')}
+                        className="text-rose-600 focus:ring-rose-500"
+                      />
+                      <div>
+                        <span className="font-bold text-zinc-900 dark:text-white block">
+                          Seluruh Departemen di Minggu Ini ({requestItems.length} item)
+                        </span>
+                        <span className="text-[11px] text-zinc-500">
+                          Semua request pada {activePeriod.period_name}
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {isAllDept && (
+                <div className="p-3 rounded-xl bg-zinc-100 dark:bg-[#1a1f26] border border-zinc-200 dark:border-[#232830] flex items-center justify-between">
+                  <span className="text-zinc-600 dark:text-zinc-400">Total Item yang Akan Dihapus:</span>
+                  <span className="font-bold font-mono text-sm text-rose-600 dark:text-rose-400">
+                    {requestItems.length} Item
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-zinc-200 dark:border-[#232830] flex items-center justify-end gap-2.5 bg-zinc-50 dark:bg-[#0e1115]">
+              <button
+                type="button"
+                onClick={() => setIsClearModalOpen(false)}
+                disabled={isClearingRequests}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-[#1c222a] cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmClearRequests}
+                disabled={isClearingRequests || (isAllDept ? requestItems.length === 0 : (clearScope === 'current_dept' ? deptItems.length === 0 : requestItems.length === 0))}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md shadow-rose-600/20"
+              >
+                {isClearingRequests ? (
+                  <>
+                    <Clock className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Ya, Hapus Semua Request</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Excel Import & Editable Review Modal */}
       {isImportModalOpen && (
