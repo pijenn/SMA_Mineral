@@ -14,6 +14,7 @@ import {
   Moon,
   Building2,
   ChevronDown,
+  RefreshCw,
 } from 'lucide-react';
 
 export function Navbar() {
@@ -26,11 +27,20 @@ export function Navbar() {
     activeRole,
     selectedDepartmentId,
     setSelectedDepartmentId,
+    refreshData,
   } = useApp();
   const { theme, toggleTheme } = useTheme();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleQuickSync = async () => {
+    setIsSyncing(true);
+    await refreshData();
+    setTimeout(() => setIsSyncing(false), 500);
+  };
+
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const userDept = departments.find((d) => d.id === currentUser?.department_id);
 
@@ -148,6 +158,16 @@ export function Navbar() {
                 <ChevronDown className="w-3.5 h-3.5 text-zinc-400 group-hover:text-purple-500 transition-colors ml-0.5" />
               )}
             </div>
+
+            {/* Live Sync / Refresh Button */}
+            <button
+              onClick={handleQuickSync}
+              disabled={isSyncing}
+              className="p-2 rounded-xl bg-zinc-100 dark:bg-[#161a20] hover:bg-zinc-200 dark:hover:bg-[#1f252e] border border-zinc-200 dark:border-[#262c36] text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white transition-all cursor-pointer"
+              title="Sinkronkan data live dengan Supabase database"
+            >
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-500' : ''}`} />
+            </button>
 
             {/* Light / Dark Mode Toggle */}
             <button

@@ -248,6 +248,7 @@ export function DepartmentApprovalSummaryTab({
               className="bg-transparent font-bold text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
             >
               <option value="all">Semua Disetujui PM (PO & Urgensi)</option>
+              <option value="all_requests">Semua Pengajuan Departemen (Termasuk Sourcing & Review)</option>
               <option value="buy_only">Hanya Otorisasi Beli (Buy Approved)</option>
               <option value="urgency_only">Hanya Persetujuan Urgensi (Item Approved)</option>
             </select>

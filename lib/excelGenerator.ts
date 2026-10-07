@@ -8,7 +8,7 @@ import {
 } from './types';
 import { formatCurrency, formatDate } from './utils';
 
-export type ApprovalSummaryScope = 'all' | 'buy_only' | 'urgency_only';
+export type ApprovalSummaryScope = 'all' | 'buy_only' | 'urgency_only' | 'all_requests';
 
 export interface DepartmentApprovalSummary {
   department_id: string;
@@ -35,6 +35,10 @@ export function isItemApprovedByPm(
   item: ProcurementRequestItem,
   scope: ApprovalSummaryScope = 'all'
 ): boolean {
+  if (scope === 'all_requests') {
+    return true;
+  }
+
   const isBuyApproved =
     item.pm_buy_approval === 'approved' ||
     item.lifecycle_status === 'pm_buy_approved' ||

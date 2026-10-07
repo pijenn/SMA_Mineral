@@ -36,16 +36,19 @@ import {
   FileSpreadsheet,
   RefreshCw,
   AlertCircle,
+  ClipboardList,
+  Search,
+  Filter,
 } from 'lucide-react';
 
-export type PmTabType = 'buy_approval' | 'rollover' | 'approval_summary' | 'final_report';
+export type PmTabType = 'monitoring' | 'buy_approval' | 'rollover' | 'approval_summary' | 'final_report';
 
 interface PmDashboardProps {
   activeTab?: PmTabType;
   onTabChange?: (tab: PmTabType) => void;
 }
 
-export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashboardProps) {
+export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboardProps) {
   const {
     activePeriod,
     selectedDepartmentId,
@@ -56,31 +59,44 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
     transactions,
     financeReport,
     approveBuyByPm,
+    approveItemUrgency,
     approveFinanceReportByPm,
     allocateDelayedItem,
+    refreshData,
   } = useApp();
 
   const [localTab, setLocalTab] = useState<PmTabType>(
-    (activeTab as string) === 'item_approval' ? 'buy_approval' : (activeTab || 'buy_approval')
+    (activeTab as string) === 'item_approval' ? 'buy_approval' : (activeTab || 'monitoring')
   );
   const currentTab: PmTabType =
     (onTabChange ? activeTab : localTab) === ('item_approval' as any)
       ? 'buy_approval'
       : onTabChange
-      ? (activeTab || 'buy_approval')
+      ? (activeTab || 'monitoring')
       : localTab;
   const setTab = (t: PmTabType) => {
     if (onTabChange) onTabChange(t);
     setLocalTab(t);
   };
 
-  const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'buy' } | null>(null);
+  const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'buy' | 'urgency' } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
   const [allocateFeedback, setAllocateFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Monitoring Tab Filters
+  const [monitoringSearch, setMonitoringSearch] = useState('');
+  const [monitoringStatusFilter, setMonitoringStatusFilter] = useState<'ALL' | 'needs_sourcing' | 'needs_finance' | 'needs_pm' | 'purchased_transit'>('ALL');
+
+  const handleManualSync = async () => {
+    setIsRefreshing(true);
+    await refreshData();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   const handleDownloadExcel = () => {
     try {
@@ -169,10 +185,41 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
     (i) => i.lifecycle_status === 'deferred_deficit' || i.lifecycle_status === 'deferred_next_week'
   );
 
+  // Monitoring filtered items
+  const filteredMonitoringItems = deptItems.filter((item) => {
+    const routine = routineItems.find((r) => r.id === item.routine_item_id);
+    const itemName = (routine?.name || item.custom_item_name || '').toLowerCase();
+    const deptName = (item.department_name || '').toLowerCase();
+    const spec = (item.specification || '').toLowerCase();
+    const q = monitoringSearch.toLowerCase().trim();
+
+    const matchesSearch = !q || itemName.includes(q) || deptName.includes(q) || spec.includes(q);
+    if (!matchesSearch) return false;
+
+    if (monitoringStatusFilter === 'needs_sourcing') {
+      return item.lifecycle_status === 'submitted' || item.lifecycle_status === 'draft';
+    }
+    if (monitoringStatusFilter === 'needs_finance') {
+      return item.lifecycle_status === 'validated' && item.pm_item_approval === 'pending';
+    }
+    if (monitoringStatusFilter === 'needs_pm') {
+      return item.lifecycle_status === 'finance_budgeted' || (item.pm_item_approval === 'approved' && item.pm_buy_approval === 'pending');
+    }
+    if (monitoringStatusFilter === 'purchased_transit') {
+      return ['purchased', 'processing_delivery', 'in_transit', 'received_at_site'].includes(item.lifecycle_status);
+    }
+
+    return true;
+  });
+
   const handleConfirmReject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectModalItem) return;
-    approveBuyByPm(rejectModalItem.id, false, rejectReason);
+    if (rejectModalItem.type === 'buy') {
+      approveBuyByPm(rejectModalItem.id, false, rejectReason);
+    } else {
+      approveItemUrgency(rejectModalItem.id, false, rejectReason);
+    }
     setRejectModalItem(null);
     setRejectReason('');
   };
@@ -226,7 +273,17 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
         </div>
 
         {/* Top Action Buttons */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleManualSync}
+            disabled={isRefreshing}
+            className="px-3.5 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#181c22] dark:hover:bg-[#232830] text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-[#262c36] text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            title="Sinkronkan data live dengan Supabase"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-500' : 'text-zinc-500'}`} />
+            <span>{isRefreshing ? 'Sinkronisasi...' : 'Sync Live'}</span>
+          </button>
+
           <button
             onClick={handleDownloadExcel}
             disabled={isExportingExcel}
@@ -336,7 +393,27 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
           Aksi Cepat Project Manager
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div
+            onClick={() => setTab('monitoring')}
+            className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-emerald-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
+                <ClipboardList className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-emerald-500 transition-colors">
+                  Monitoring Stok & Permintaan
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {deptItems.length} Permintaan Aktif
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all shrink-0" />
+          </div>
+
           <div
             onClick={() => setIsUserMgmtOpen(true)}
             className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-purple-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
@@ -350,7 +427,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
                   Kelola Akun & Hak Akses
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Kelola akun pengguna & role departemen.
+                  Kelola akun pengguna & role.
                 </p>
               </div>
             </div>
@@ -359,22 +436,22 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
 
           <div
             onClick={() => setTab('rollover')}
-            className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-emerald-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
+            className="p-5 rounded-2xl bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] flex items-center justify-between gap-4 cursor-pointer group hover:border-amber-500/50 hover:bg-zinc-50 dark:hover:bg-[#181c22] transition-all"
           >
             <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
+              <div className="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-emerald-500 transition-colors">
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white group-hover:text-amber-500 transition-colors">
                   Alokasi Surplus ({formatCurrency(remainingCash > 0 ? remainingCash : 0)})
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Biayai barang backlog dari surplus kas.
+                  Biayai barang backlog.
                 </p>
               </div>
             </div>
-            <ArrowRight className="w-5 h-5 text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all shrink-0" />
+            <ArrowRight className="w-5 h-5 text-zinc-400 group-hover:text-amber-500 group-hover:translate-x-1 transition-all shrink-0" />
           </div>
 
           <div
@@ -390,7 +467,7 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
                   Rekap Approval Dept (Excel)
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Ringkasan item disetujui PM sebelum Weekly Report.
+                  Ringkasan item sebelum Sign-Off.
                 </p>
               </div>
             </div>
@@ -401,6 +478,17 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
 
       {/* Module Sub-Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-[#232830] pb-3">
+        <button
+          onClick={() => setTab('monitoring')}
+          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            currentTab === 'monitoring'
+              ? 'bg-emerald-500 text-slate-950 shadow-xs'
+              : 'bg-white dark:bg-[#14171c] text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white border border-zinc-200 dark:border-[#232830]'
+          }`}
+        >
+          <ClipboardList className="w-3.5 h-3.5" />
+          <span>Monitoring Stok & Pengajuan ({deptItems.length})</span>
+        </button>
         <button
           onClick={() => setTab('buy_approval')}
           className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer ${
@@ -443,6 +531,225 @@ export function PmDashboard({ activeTab = 'buy_approval', onTabChange }: PmDashb
           Sign-Off Laporan Mingguan
         </button>
       </div>
+
+      {/* Tab: Monitoring Stok & Pengajuan (Live Pipeline) */}
+      {currentTab === 'monitoring' && (
+        <div className="space-y-6">
+          {/* Header & Filter Controls */}
+          <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-emerald-500" />
+                  <span>Live Pipeline & Monitoring Seluruh Stok Pengadaan</span>
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Memantau penyesuaian kuantitas dari Finance, pembaruan harga sourcing Logistik, dan status approval lintas departemen.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleManualSync}
+                  disabled={isRefreshing}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#181c22] dark:hover:bg-[#232830] text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-[#262c36] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Perbarui data dari Supabase"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-500' : 'text-zinc-500'}`} />
+                  <span>{isRefreshing ? 'Sinkronisasi...' : 'Sync Live'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter controls */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs pt-1 border-t border-zinc-100 dark:border-[#1e232b]">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder="Cari nama barang, kode, spesifikasi, atau departemen..."
+                  value={monitoringSearch}
+                  onChange={(e) => setMonitoringSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830]">
+                  <Filter className="w-3.5 h-3.5 text-zinc-400" />
+                  <span className="text-zinc-500 dark:text-zinc-400 font-semibold">Tahap:</span>
+                  <select
+                    value={monitoringStatusFilter}
+                    onChange={(e) => setMonitoringStatusFilter(e.target.value as any)}
+                    className="bg-transparent font-bold text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
+                  >
+                    <option value="ALL">Semua Tahap Pengadaan</option>
+                    <option value="needs_sourcing">1. Perlu Review / Sourcing Logistik</option>
+                    <option value="needs_finance">2. Perlu Persetujuan Finance</option>
+                    <option value="needs_pm">3. Siap Otorisasi Beli PM (PO)</option>
+                    <option value="purchased_transit">4. Terbeli & Pengiriman</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Items List */}
+          <div className="bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] overflow-hidden shadow-xs">
+            <div className="p-4 sm:p-5 border-b border-zinc-200 dark:border-[#232830] flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
+                Daftar Permintaan & Update Stok ({filteredMonitoringItems.length} Item)
+              </h3>
+              <span className="text-xs text-zinc-400">
+                Total Nilai Sourcing:{' '}
+                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">
+                  {formatCurrency(filteredMonitoringItems.reduce((sum, it) => sum + (it.quantity || 1) * (it.final_unit_price || 0), 0))}
+                </strong>
+              </span>
+            </div>
+
+            <div className="divide-y divide-zinc-200 dark:divide-[#232830]">
+              {filteredMonitoringItems.length === 0 ? (
+                <div className="text-center py-16 px-4 text-xs text-zinc-400">
+                  Tidak ada barang pengadaan yang sesuai dengan filter pencarian.
+                </div>
+              ) : (
+                filteredMonitoringItems.map((item) => {
+                  const routine = routineItems.find((r) => r.id === item.routine_item_id);
+                  const itemName = routine?.name || item.custom_item_name || 'Barang Tambang';
+                  const totalCost = (item.quantity || 1) * (item.final_unit_price || 0);
+                  const isFinanceModified = item.pm_item_approval_notes && item.pm_item_approval_notes.includes('[Finance:');
+                  const isLogisticsPriced = item.final_unit_price && item.final_unit_price > 0;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-5 flex flex-col md:flex-row md:items-start justify-between gap-4 hover:bg-zinc-50/60 dark:hover:bg-[#181c22] transition-colors"
+                    >
+                      <div className="space-y-2 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">
+                            Dept: <strong className="text-zinc-800 dark:text-zinc-200">{item.department_name}</strong>
+                          </span>
+                          <PriorityBadge level={item.priority_level} showFull />
+                          <LifecycleBadge status={item.lifecycle_status} />
+                          {item.delivery_status && item.delivery_status !== 'none' && (
+                            <DeliveryBadge status={item.delivery_status} />
+                          )}
+                          {item.is_rollover && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                              Rollover
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
+                            {itemName}
+                          </h4>
+                          {item.specification && (
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                              Spek: &ldquo;{item.specification}&rdquo;
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Price & Quantity breakdown */}
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-1">
+                          <span className="flex items-center gap-1.5">
+                            Jumlah:{' '}
+                            <strong className="text-zinc-900 dark:text-white font-bold">
+                              {item.quantity} {item.unit}
+                            </strong>
+                            {isFinanceModified && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                Disesuaikan Finance
+                              </span>
+                            )}
+                          </span>
+
+                          <span className="flex items-center gap-1.5">
+                            Harga Satuan:{' '}
+                            <strong className="text-emerald-600 dark:text-emerald-400 font-mono font-bold">
+                              {formatCurrency(item.final_unit_price || 0)} / {item.unit}
+                            </strong>
+                            {isLogisticsPriced && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                                Sourced Logistik
+                              </span>
+                            )}
+                          </span>
+
+                          <span>
+                            Total Biaya:{' '}
+                            <strong className="text-emerald-600 dark:text-emerald-400 font-mono font-bold">
+                              {formatCurrency(totalCost)}
+                            </strong>
+                          </span>
+                        </div>
+
+                        {/* Note logs from Finance and Logistics */}
+                        {(item.pm_item_approval_notes || item.logistics_notes || item.pm_buy_approval_notes) && (
+                          <div className="space-y-1 pt-1">
+                            {item.pm_item_approval_notes && (
+                              <div className="text-[11px] text-blue-700 dark:text-blue-300 bg-blue-500/10 px-2.5 py-1 rounded-lg">
+                                <strong>Log Finance / Urgensi:</strong> {item.pm_item_approval_notes}
+                              </div>
+                            )}
+                            {item.logistics_notes && (
+                              <div className="text-[11px] text-teal-700 dark:text-teal-300 bg-teal-500/10 px-2.5 py-1 rounded-lg">
+                                <strong>Log Logistik:</strong> {item.logistics_notes}
+                              </div>
+                            )}
+                            {item.pm_buy_approval_notes && (
+                              <div className="text-[11px] text-purple-700 dark:text-purple-300 bg-purple-500/10 px-2.5 py-1 rounded-lg">
+                                <strong>Catatan PM:</strong> {item.pm_buy_approval_notes}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-start pt-1">
+                        {item.pm_buy_approval === 'pending' && (item.lifecycle_status === 'finance_budgeted' || item.pm_item_approval === 'approved') && (
+                          <button
+                            onClick={() => approveBuyByPm(item.id, true)}
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1"
+                            title="Beri otorisasi pembelian PO"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Otorisasi Beli</span>
+                          </button>
+                        )}
+
+                        {item.pm_item_approval === 'pending' && (
+                          <button
+                            onClick={() => approveItemUrgency(item.id, true)}
+                            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1"
+                            title="Setujui urgensi item pengadaan"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Setujui Urgensi</span>
+                          </button>
+                        )}
+
+                        {item.lifecycle_status !== 'pm_item_rejected' && item.lifecycle_status !== 'purchased' && (
+                          <button
+                            onClick={() => setRejectModalItem({ id: item.id, type: item.pm_item_approval === 'approved' ? 'buy' : 'urgency' })}
+                            className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            Hold / Tolak
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab: Otorisasi Pembelian PO (Stage 2) */}
       {currentTab === 'buy_approval' && (

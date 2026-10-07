@@ -69,6 +69,7 @@ interface AppContextType {
   toggleUserActive: (userId: string) => Promise<{ success: boolean; error?: string }>;
   resetUserPassword: (userId: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   refreshUsers: () => Promise<void>;
+  refreshData: () => Promise<void>;
 
   // Roles & Dept Selection
   activeRole: UserRole;
@@ -238,7 +239,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Master Data Loader from Supabase on App Mount
+  // Master Data Loader from Supabase
   const loadData = async () => {
     try {
       // 1. Fetch User Profiles
@@ -251,12 +252,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       // 2. Fetch Departments
+      let fetchedDepts = departments;
       const { data: deptData } = await supabase
         .from('departments')
         .select('*')
         .order('code', { ascending: true });
       if (deptData && deptData.length > 0) {
         setDepartments(deptData);
+        fetchedDepts = deptData;
       }
 
       // 3. Fetch Procurement Periods
@@ -274,12 +277,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       // 4. Fetch Routine Items Catalog
+      let fetchedRoutines = routineItems;
       const { data: rData } = await supabase
         .from('routine_items')
         .select('*')
         .order('item_code', { ascending: true });
       if (rData && rData.length > 0) {
         setRoutineItems(rData);
+        fetchedRoutines = rData;
       }
 
       // 5. Fetch Request Items (with joined department, period, and routine details)
@@ -301,16 +306,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (reqData && reqData.length > 0) {
         const mapped: ProcurementRequestItem[] = reqData.map((row: any) => {
-          const unitPrice = row.final_unit_price || row.routine_item?.estimated_unit_price || 0;
-          const qty = row.quantity || 1;
+          const unitPrice = row.final_unit_price !== null && row.final_unit_price !== undefined
+            ? Number(row.final_unit_price)
+            : Number(row.routine_item?.estimated_unit_price || 0);
+          const qty = Number(row.quantity || 1);
           const parentPeriodId = (row.origin_period_id || row.request?.period_id || currentActive.id) as string;
+          const targetDeptId = row.request?.department_id || row.department_id;
+          const deptObj = fetchedDepts.find((d) => d.id === targetDeptId);
+
           return {
             ...row,
             origin_period_id: parentPeriodId,
-            department_id: row.request?.department_id || row.department_id,
-            department_name: row.request?.departments?.name || row.department_name,
-            department_code: row.request?.departments?.code || row.department_code,
-            period_name: row.request?.procurement_periods?.period_name || row.period_name,
+            department_id: targetDeptId,
+            department_name: deptObj?.name || row.request?.departments?.name || row.department_name || 'Departemen',
+            department_code: deptObj?.code || row.request?.departments?.code || row.department_code || 'DEPT',
+            period_name: row.request?.procurement_periods?.period_name || row.period_name || currentActive.period_name,
             custom_item_name: row.custom_item_name || row.routine_item?.name,
             final_unit_price: unitPrice,
             estimated_total_price: qty * unitPrice,
@@ -357,6 +367,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshData = async () => {
+    await loadData();
+  };
+
   // Helper to filter request items strictly for active period
   const filterPeriodRequestItems = (items: ProcurementRequestItem[], periodId: string): ProcurementRequestItem[] => {
     return items.filter((i) => i.origin_period_id === periodId);
@@ -364,6 +378,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadData();
+
+    // Set up Realtime Supabase Database Sync for multi-user / multi-role changes
+    const realtimeChannel = supabase
+      .channel('sma_realtime_db_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'procurement_request_items' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'procurement_periods' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'purchase_transactions' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'purchase_proofs' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'routine_items' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'financial_journal_entries' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+
+    // Sync automatically whenever browser tab comes into focus
+    const handleFocusSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadData();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleFocusSync);
+    window.addEventListener('focus', handleFocusSync);
+
+    return () => {
+      supabase.removeChannel(realtimeChannel);
+      window.removeEventListener('visibilitychange', handleFocusSync);
+      window.removeEventListener('focus', handleFocusSync);
+    };
   }, []);
 
   // Filter items and transactions dynamically when activePeriod changes
@@ -1854,6 +1938,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         toggleUserActive,
         resetUserPassword,
         refreshUsers,
+        refreshData,
         activeRole,
         setActiveRole,
         selectedDepartmentId,

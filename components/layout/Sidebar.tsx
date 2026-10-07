@@ -70,6 +70,7 @@ export function Sidebar({
       case 'project_manager':
       default:
         return [
+          { id: 'monitoring', label: 'Monitoring Stok & Pengajuan', icon: ClipboardList },
           { id: 'buy_approval', label: 'Otorisasi Pembelian (Buy)', icon: ShieldCheck },
           { id: 'rollover', label: 'Alokasi Surplus Rollover', icon: Layers },
           { id: 'approval_summary', label: 'Rekap Approval Dept (Excel)', icon: FileSpreadsheet },

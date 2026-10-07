@@ -35,6 +35,7 @@ import {
   TrendingUp,
   TrendingDown,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { ExcelImportModal } from './ExcelImportModal';
 
@@ -58,10 +59,18 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     clearAllRequests,
     selectedDepartmentId,
     setSelectedDepartmentId,
+    refreshData,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('ALL');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsRefreshing(true);
+    await refreshData();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   // Clear Request state
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
@@ -389,7 +398,18 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isRefreshing}
+            className="px-3.5 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#181c22] dark:hover:bg-[#232830] text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-[#262c36] font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+            title="Sinkronkan data live dengan Supabase"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-500' : 'text-zinc-500'}`} />
+            <span>{isRefreshing ? 'Sinkronisasi...' : 'Sync Live'}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -612,8 +632,13 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     )}
 
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-4 gap-y-1">
-                      <span>
+                      <span className="flex items-center gap-1.5">
                         Jumlah: <strong className="text-zinc-800 dark:text-zinc-200">{item.quantity} {item.unit}</strong>
+                        {item.pm_item_approval_notes && item.pm_item_approval_notes.includes('[Finance:') && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                            Disesuaikan Finance
+                          </span>
+                        )}
                       </span>
                       <span>
                         Harga Satuan Sourcing:{' '}

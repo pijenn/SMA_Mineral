@@ -64,6 +64,7 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
     approveItemUrgency,
     batchApproveUrgency,
     adjustItemQuantity,
+    refreshData,
   } = useApp();
 
   const [localTab, setLocalTab] = useState<'budget' | 'item_approval' | 'requests' | 'receipts' | 'journals' | 'report'>(activeTab);
@@ -76,6 +77,13 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
   const [selectedProofPreview, setSelectedProofPreview] = useState<string | null>(null);
   const [reportNotes, setReportNotes] = useState('Anggaran operasional mingguan telah direkonsiliasi dengan kuitansi fisik.');
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsRefreshing(true);
+    await refreshData();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   // Edit Cash Modal States
   const [isEditCashModalOpen, setIsEditCashModalOpen] = useState(false);
@@ -450,7 +458,18 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
         </div>
 
         {/* Top Actions */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isRefreshing}
+            className="px-3.5 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#181c22] dark:hover:bg-[#232830] text-zinc-800 dark:text-zinc-200 border border-zinc-200 dark:border-[#262c36] font-bold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+            title="Sinkronkan data live dengan Supabase"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-500' : 'text-zinc-500'}`} />
+            <span>{isRefreshing ? 'Sinkronisasi...' : 'Sync Live'}</span>
+          </button>
+
           <button
             onClick={handleOpenEditCash}
             className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
