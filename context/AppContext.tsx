@@ -169,6 +169,10 @@ interface AppContextType {
     periodId?: string;
     departmentId?: string;
   }) => Promise<{ success: boolean; count: number; error?: string }>;
+  cancelItemPurchase: (
+    itemId: string,
+    notes: string
+  ) => Promise<{ success: boolean; error?: string }>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
 }
@@ -1917,6 +1921,127 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const cancelItemPurchase = async (
+    itemId: string,
+    notes: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const target = allRequestItems.find((i) => i.id === itemId);
+      if (!target) {
+        return { success: false, error: 'Barang pengadaan tidak ditemukan.' };
+      }
+
+      if (activeRole !== 'project_manager' && currentUser?.role !== 'project_manager') {
+        return { success: false, error: 'Hanya Project Manager yang berwenang membatalkan pembelian barang.' };
+      }
+
+      const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+      const cleanNotes = notes?.trim() || '';
+
+      // 1. Optimistically remove item from React states
+      setAllRequestItems((prev) => prev.filter((i) => i.id !== itemId));
+      setRequestItems((prev) => prev.filter((i) => i.id !== itemId));
+
+      // 2. Reverse / remove associated transaction and journal entries if applicable
+      const targetCost = (target.quantity || 1) * (target.final_unit_price || 0);
+      const associatedTx = allTransactions.find((tx) => {
+        const matchesPeriod = tx.period_id === (target.origin_period_id || activePeriod.id);
+        const matchesNotes = tx.notes && (
+          tx.notes.includes(target.department_name || '') ||
+          tx.notes.includes(itemName)
+        );
+        const matchesCost = Math.abs(tx.total_amount - targetCost) < 0.01;
+        return matchesPeriod && (matchesNotes || matchesCost);
+      });
+
+      if (associatedTx) {
+        setAllTransactions((prev) => prev.filter((t) => t.id !== associatedTx.id));
+        setTransactions((prev) => prev.filter((t) => t.id !== associatedTx.id));
+        setJournalEntries((prev) => prev.filter((j) => j.transaction_id !== associatedTx.id));
+
+        try {
+          await supabase.from('purchase_proofs').delete().eq('transaction_id', associatedTx.id);
+          await supabase.from('financial_journal_entries').delete().eq('transaction_id', associatedTx.id);
+          await supabase.from('purchase_transactions').delete().eq('id', associatedTx.id);
+        } catch (txErr) {
+          console.warn('Supabase delete transaction on cancel purchase error:', txErr);
+        }
+      }
+
+      // 3. Delete from Supabase
+      try {
+        await supabase.from('purchase_transaction_items').delete().eq('request_item_id', itemId);
+        await supabase.from('notifications').delete().eq('related_item_id', itemId);
+
+        const { error: delErr } = await supabase
+          .from('procurement_request_items')
+          .delete()
+          .eq('id', itemId);
+
+        if (delErr) {
+          console.error('Supabase delete item error:', delErr);
+        }
+
+        if (target.request_id) {
+          const { count } = await supabase
+            .from('procurement_request_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('request_id', target.request_id);
+
+          if (count === 0) {
+            await supabase.from('procurement_requests').delete().eq('id', target.request_id);
+          }
+        }
+      } catch (dbErr) {
+        console.error('Supabase delete item exception:', dbErr);
+      }
+
+      // 4. Create and push notification to the requesting department user
+      const targetUser =
+        users.find((u) => u.department_id === target.department_id && u.role === 'hod') ||
+        users.find((u) => u.department_id === target.department_id) ||
+        currentUser;
+
+      const notifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `notif-${Date.now()}`;
+      const notif: AppNotification = {
+        id: notifId,
+        recipient_id: targetUser?.id,
+        department_id: target.department_id,
+        title: `Pembelian Dibatalkan PM: ${itemName}`,
+        message: `Project Manager telah membatalkan pembelian barang "${itemName}" (${target.quantity} ${target.unit}) untuk Departemen ${target.department_name || 'Departemen'}.${cleanNotes ? ` Catatan PM: "${cleanNotes}".` : ''} Pengajuan barang ini telah dihapus.`,
+        type: 'need_revision',
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+
+      setNotifications((prev) => [notif, ...prev]);
+
+      if (targetUser?.id) {
+        try {
+          await supabase.from('notifications').insert([
+            {
+              id: notif.id,
+              recipient_id: targetUser.id,
+              department_id: target.department_id || null,
+              title: notif.title,
+              message: notif.message,
+              type: notif.type,
+              is_read: false,
+              created_at: notif.created_at,
+            },
+          ]);
+        } catch (notifErr) {
+          console.warn('Supabase notification insert warning:', notifErr);
+        }
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('cancelItemPurchase error:', err);
+      return { success: false, error: err?.message || 'Gagal membatalkan pembelian barang.' };
+    }
+  };
+
   const markNotificationRead = (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
@@ -1976,6 +2101,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         switchPeriod,
         createAndSwitchPeriod,
         clearAllRequests,
+        cancelItemPurchase,
         markNotificationRead,
         markAllNotificationsRead,
       }}

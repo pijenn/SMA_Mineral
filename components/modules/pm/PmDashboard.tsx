@@ -39,6 +39,7 @@ import {
   ClipboardList,
   Search,
   Filter,
+  Ban,
 } from 'lucide-react';
 
 export type PmTabType = 'monitoring' | 'buy_approval' | 'rollover' | 'approval_summary' | 'final_report';
@@ -62,6 +63,7 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
     approveItemUrgency,
     approveFinanceReportByPm,
     allocateDelayedItem,
+    cancelItemPurchase,
     refreshData,
   } = useApp();
 
@@ -81,6 +83,10 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
 
   const [rejectModalItem, setRejectModalItem] = useState<{ id: string; type: 'buy' | 'urgency' } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [cancelPurchaseModalItem, setCancelPurchaseModalItem] = useState<ProcurementRequestItem | null>(null);
+  const [cancelPurchaseReason, setCancelPurchaseReason] = useState('');
+  const [isCancellingPurchase, setIsCancellingPurchase] = useState(false);
+  const [cancelFeedback, setCancelFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
@@ -222,6 +228,38 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
     }
     setRejectModalItem(null);
     setRejectReason('');
+  };
+
+  const handleConfirmCancelPurchase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelPurchaseModalItem) return;
+    if (!cancelPurchaseReason.trim()) {
+      alert('Harap masukkan alasan pembatalan pembelian.');
+      return;
+    }
+
+    try {
+      setIsCancellingPurchase(true);
+      const res = await cancelItemPurchase(cancelPurchaseModalItem.id, cancelPurchaseReason);
+      setIsCancellingPurchase(false);
+
+      if (res.success) {
+        const routine = routineItems.find((r) => r.id === cancelPurchaseModalItem.routine_item_id);
+        const itemName = routine?.name || cancelPurchaseModalItem.custom_item_name || 'Barang';
+        setCancelFeedback({
+          type: 'success',
+          message: `Pembelian barang "${itemName}" berhasil dibatalkan dan pengajuan telah dihapus dari sistem.`,
+        });
+        setCancelPurchaseModalItem(null);
+        setCancelPurchaseReason('');
+        setTimeout(() => setCancelFeedback(null), 5000);
+      } else {
+        alert(res.error || 'Gagal membatalkan pembelian barang.');
+      }
+    } catch (err: any) {
+      setIsCancellingPurchase(false);
+      alert(err?.message || 'Terjadi kesalahan saat membatalkan pembelian barang.');
+    }
   };
 
   const handleAllocateRollover = async (itemId: string) => {
@@ -475,6 +513,22 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
           </div>
         </div>
       </div>
+
+      {/* Cancel Purchase Feedback Banner */}
+      {cancelFeedback && (
+        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            <span>{cancelFeedback.message}</span>
+          </div>
+          <button
+            onClick={() => setCancelFeedback(null)}
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-white p-1 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Module Sub-Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-[#232830] pb-3">
@@ -739,6 +793,23 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                             className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer"
                           >
                             Hold / Tolak
+                          </button>
+                        )}
+
+                        {/* Cancel Item Purchase Button (for items in progress / status sedang diproses) */}
+                        {((item.delivery_status === 'processing' || item.lifecycle_status === 'processing_delivery' || item.lifecycle_status === 'purchased') &&
+                          item.delivery_status !== 'delivered' &&
+                          item.lifecycle_status !== 'received_at_site') && (
+                          <button
+                            onClick={() => {
+                              setCancelPurchaseModalItem(item);
+                              setCancelPurchaseReason('');
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                            title="Batalkan pembelian barang yang sedang diproses (Hapus request & beri tahu pemohon)"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Cancel Item Purchase</span>
                           </button>
                         )}
                       </div>
@@ -1123,6 +1194,7 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                       <th className="py-3 px-4 text-right">Harga Satuan</th>
                       <th className="py-3 px-4 text-right">Subtotal</th>
                       <th className="py-3 px-4 text-center">Status Pengiriman</th>
+                      <th className="py-3 px-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-[#232830]">
@@ -1130,6 +1202,10 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                       const routine = routineItems.find((r) => r.id === item.routine_item_id);
                       const itemName = item.custom_item_name || routine?.name || 'Barang Tambang';
                       const subtotal = (item.quantity || 1) * (item.final_unit_price || 0);
+                      const isItemInProcess =
+                        (item.delivery_status === 'processing' || item.lifecycle_status === 'processing_delivery' || item.lifecycle_status === 'purchased') &&
+                        item.delivery_status !== 'delivered' &&
+                        item.lifecycle_status !== 'received_at_site';
 
                       return (
                         <tr key={item.id} className="hover:bg-zinc-50/60 dark:hover:bg-[#181c22] transition-colors">
@@ -1165,6 +1241,23 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                               <span className="text-[11px] text-zinc-400">-</span>
                             )}
                           </td>
+                          <td className="py-3.5 px-4 text-center">
+                            {isItemInProcess ? (
+                              <button
+                                onClick={() => {
+                                  setCancelPurchaseModalItem(item);
+                                  setCancelPurchaseReason('');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1 hover:border-red-500"
+                                title="Batalkan pembelian item yang sedang diproses (Hapus request & beri tahu pemohon)"
+                              >
+                                <Ban className="w-3 h-3" />
+                                <span>Cancel Item Purchase</span>
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-zinc-400">-</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -1181,6 +1274,7 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                       <td className="py-3.5 px-4 text-right font-mono text-sm text-emerald-600 dark:text-emerald-400">
                         {formatCurrency(totalSpent)}
                       </td>
+                      <td></td>
                       <td></td>
                     </tr>
                   </tfoot>
@@ -1283,6 +1377,116 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
           </div>
         </div>
       )}
+
+      {/* Cancel Item Purchase Modal (PM Role) */}
+      {cancelPurchaseModalItem && (() => {
+        const routine = routineItems.find((r) => r.id === cancelPurchaseModalItem.routine_item_id);
+        const itemName = routine?.name || cancelPurchaseModalItem.custom_item_name || 'Barang Tambang';
+        const totalCost = (cancelPurchaseModalItem.quantity || 1) * (cancelPurchaseModalItem.final_unit_price || 0);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="w-full max-w-lg bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-4">
+              {/* Header */}
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
+                  <Ban className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-base text-zinc-900 dark:text-white">
+                    Cancel Item Purchase
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Batalkan pembelian barang yang berstatus <strong>Sedang Diproses</strong>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Item Details Summary Card */}
+              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">Nama Barang:</span>
+                  <strong className="text-zinc-900 dark:text-white">{itemName}</strong>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">Departemen:</span>
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    {cancelPurchaseModalItem.department_name} ({cancelPurchaseModalItem.department_code || 'DEPT'})
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">Kuantitas:</span>
+                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    {cancelPurchaseModalItem.quantity} {cancelPurchaseModalItem.unit}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">Total Nilai PO:</span>
+                  <span className="font-mono font-bold text-red-600 dark:text-red-400">
+                    {formatCurrency(totalCost)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Warning Notice */}
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+                <div className="leading-relaxed">
+                  <strong>Perhatian:</strong> Tindakan ini akan membatalkan proses pembelian barang ini, menghapus request dari sistem, dan mengirimkan notifikasi ke departemen pemohon berdasarkan catatan yang Anda tulis.
+                </div>
+              </div>
+
+              {/* Form with Required Notes */}
+              <form onSubmit={handleConfirmCancelPurchase} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1.5">
+                    Alasan Pembatalan Pembelian <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    placeholder="Tuliskan alasan pembatalan pembelian untuk pemohon & logistik..."
+                    value={cancelPurchaseReason}
+                    onChange={(e) => setCancelPurchaseReason(e.target.value)}
+                    className="w-full p-3 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-red-500 transition-colors"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCancelPurchaseModalItem(null);
+                      setCancelPurchaseReason('');
+                    }}
+                    disabled={isCancellingPurchase}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer disabled:opacity-50"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCancellingPurchase || !cancelPurchaseReason.trim()}
+                    className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs transition-all"
+                  >
+                    {isCancellingPurchase ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Memproses Pembatalan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Ban className="w-3.5 h-3.5" />
+                        <span>Konfirmasi Batalkan Pembelian</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* User Management Modal */}
       <UserManagementModal isOpen={isUserMgmtOpen} onClose={() => setIsUserMgmtOpen(false)} />
