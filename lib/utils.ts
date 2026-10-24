@@ -128,3 +128,204 @@ export function getDeliveryStatusMeta(status: DeliveryStatusType) {
       return { label: 'Belum Dikirim', color: 'text-zinc-500 dark:text-zinc-400 bg-zinc-500/10 border-zinc-500/20' };
   }
 }
+
+// ============================================================================
+// SYSTEM METADATA TAG HELPERS (FOR PRICE CHANGE & QUANTITY REDUCTION ALERTS)
+// ============================================================================
+
+export function cleanSystemNotes(notes?: string | null): string {
+  if (!notes) return '';
+  return notes
+    .replace(/\[\[PRICE_ALERT:[^\]]*\]\]/g, '')
+    .replace(/\[\[HOD_REDUCTION_PENDING:[^\]]*\]\]/g, '')
+    .replace(/\[\[HOD_REDUCTION_RESOLVED:[^\]]*\]\]/g, '')
+    .replace(/\s*\|\s*\|\s*/g, ' | ')
+    .replace(/^\s*\|\s*|\s*\|\s*$/g, '')
+    .trim();
+}
+
+export interface PriceChangeAlertMeta {
+  alertId: string;
+  itemId: string;
+  oldUnitPrice: number;
+  newUnitPrice: number;
+  quantity: number;
+  pmAck: boolean;
+  finAck: boolean;
+  reason: string;
+  timestamp: number;
+}
+
+export function serializePriceAlertTag(meta: PriceChangeAlertMeta): string {
+  const safeReason = encodeURIComponent(meta.reason || '');
+  return `[[PRICE_ALERT:id=${meta.alertId};old=${meta.oldUnitPrice};new=${meta.newUnitPrice};qty=${meta.quantity};pm_ack=${meta.pmAck ? 1 : 0};fin_ack=${meta.finAck ? 1 : 0};reason=${safeReason};ts=${meta.timestamp}]]`;
+}
+
+export function parsePriceAlertFromNotes(
+  itemId: string,
+  logisticsNotes?: string | null
+): PriceChangeAlertMeta | null {
+  if (!logisticsNotes) return null;
+  const match = logisticsNotes.match(/\[\[PRICE_ALERT:([^\]]+)\]\]/);
+  if (!match || !match[1]) return null;
+
+  const kv: Record<string, string> = {};
+  match[1].split(';').forEach((pair) => {
+    const idx = pair.indexOf('=');
+    if (idx > 0) {
+      const k = pair.slice(0, idx).trim();
+      const v = pair.slice(idx + 1).trim();
+      kv[k] = v;
+    }
+  });
+
+  const oldUnitPrice = Number(kv.old ?? 0);
+  const newUnitPrice = Number(kv.new ?? 0);
+  if (isNaN(oldUnitPrice) || isNaN(newUnitPrice) || oldUnitPrice === newUnitPrice) {
+    return null;
+  }
+
+  let decodedReason = '';
+  try {
+    decodedReason = decodeURIComponent(kv.reason || '');
+  } catch {
+    decodedReason = kv.reason || '';
+  }
+
+  return {
+    alertId: kv.id || `pa-${itemId}`,
+    itemId,
+    oldUnitPrice,
+    newUnitPrice,
+    quantity: Number(kv.qty || 1),
+    pmAck: kv.pm_ack === '1',
+    finAck: kv.fin_ack === '1',
+    reason: decodedReason,
+    timestamp: Number(kv.ts || Date.now()),
+  };
+}
+
+export function upsertPriceAlertInNotes(
+  existingNotes: string | undefined | null,
+  humanNote: string | undefined,
+  meta: PriceChangeAlertMeta
+): string {
+  const stripped = (existingNotes || '').replace(/\[\[PRICE_ALERT:[^\]]*\]\]/g, '').replace(/\s*\|\s*$/, '').trim();
+  const tag = serializePriceAlertTag(meta);
+  const withHuman = humanNote
+    ? stripped
+      ? `${stripped} | ${humanNote}`
+      : humanNote
+    : stripped;
+  return withHuman ? `${withHuman} ${tag}` : tag;
+}
+
+export function markPriceAlertAckInNotes(
+  existingNotes: string | undefined | null,
+  itemId: string,
+  role: 'project_manager' | 'admin_finance'
+): string {
+  if (!existingNotes) return '';
+  const parsed = parsePriceAlertFromNotes(itemId, existingNotes);
+  if (!parsed) return existingNotes;
+  const updated: PriceChangeAlertMeta = {
+    ...parsed,
+    pmAck: role === 'project_manager' ? true : parsed.pmAck,
+    finAck: role === 'admin_finance' ? true : parsed.finAck,
+  };
+  const stripped = existingNotes.replace(/\[\[PRICE_ALERT:[^\]]*\]\]/g, '').trim();
+  const tag = serializePriceAlertTag(updated);
+  return stripped ? `${stripped} ${tag}` : tag;
+}
+
+export interface HodReductionAlertMeta {
+  alertId: string;
+  itemId: string;
+  originalQuantity: number;
+  newQuantity: number;
+  reducedQuantity: number;
+  reason: string;
+  timestamp: number;
+}
+
+export function serializeHodReductionTag(meta: HodReductionAlertMeta): string {
+  const safeReason = encodeURIComponent(meta.reason || '');
+  return `[[HOD_REDUCTION_PENDING:id=${meta.alertId};orig=${meta.originalQuantity};new=${meta.newQuantity};diff=${meta.reducedQuantity};reason=${safeReason};ts=${meta.timestamp}]]`;
+}
+
+export function parseHodReductionFromNotes(
+  itemId: string,
+  approvalNotes?: string | null
+): HodReductionAlertMeta | null {
+  if (!approvalNotes) return null;
+  const match = approvalNotes.match(/\[\[HOD_REDUCTION_PENDING:([^\]]+)\]\]/);
+  if (!match || !match[1]) return null;
+
+  const kv: Record<string, string> = {};
+  match[1].split(';').forEach((pair) => {
+    const idx = pair.indexOf('=');
+    if (idx > 0) {
+      const k = pair.slice(0, idx).trim();
+      const v = pair.slice(idx + 1).trim();
+      kv[k] = v;
+    }
+  });
+
+  const originalQuantity = Number(kv.orig ?? 0);
+  const newQuantity = Number(kv.new ?? 0);
+  const reducedQuantity = Number(kv.diff ?? originalQuantity - newQuantity);
+  if (isNaN(reducedQuantity) || reducedQuantity <= 0) {
+    return null;
+  }
+
+  let decodedReason = '';
+  try {
+    decodedReason = decodeURIComponent(kv.reason || '');
+  } catch {
+    decodedReason = kv.reason || '';
+  }
+
+  return {
+    alertId: kv.id || `hr-${itemId}`,
+    itemId,
+    originalQuantity,
+    newQuantity,
+    reducedQuantity,
+    reason: decodedReason,
+    timestamp: Number(kv.ts || Date.now()),
+  };
+}
+
+export function upsertHodReductionInNotes(
+  existingNotes: string | undefined | null,
+  humanNote: string | undefined,
+  meta: HodReductionAlertMeta
+): string {
+  const stripped = (existingNotes || '')
+    .replace(/\[\[HOD_REDUCTION_PENDING:[^\]]*\]\]/g, '')
+    .replace(/\s*\|\s*$/, '')
+    .trim();
+  const tag = serializeHodReductionTag(meta);
+  const withHuman = humanNote
+    ? stripped
+      ? `${stripped} | ${humanNote}`
+      : humanNote
+    : stripped;
+  return withHuman ? `${withHuman} ${tag}` : tag;
+}
+
+export function resolveHodReductionInNotes(
+  existingNotes: string | undefined | null,
+  resolutionNote: string,
+  action: 'postponed' | 'accepted',
+  reducedQty: number
+): string {
+  const stripped = (existingNotes || '')
+    .replace(/\[\[HOD_REDUCTION_PENDING:[^\]]*\]\]/g, '')
+    .replace(/\[\[HOD_REDUCTION_RESOLVED:[^\]]*\]\]/g, '')
+    .replace(/\s*\|\s*$/, '')
+    .trim();
+  const resolvedTag = `[[HOD_REDUCTION_RESOLVED:action=${action};diff=${reducedQty};ts=${Date.now()}]]`;
+  const combined = stripped ? `${stripped} | ${resolutionNote}` : resolutionNote;
+  return `${combined} ${resolvedTag}`;
+}

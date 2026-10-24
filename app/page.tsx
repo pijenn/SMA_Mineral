@@ -9,6 +9,8 @@ import { LogisticsDashboard } from '@/components/modules/logistics/LogisticsDash
 import { FinanceDashboard } from '@/components/modules/finance/FinanceDashboard';
 import { PmDashboard } from '@/components/modules/pm/PmDashboard';
 import { LoadingScreen } from '@/components/ui/LoadingScreen';
+import PriceChangeAlertModal from '@/components/ui/PriceChangeAlertModal';
+import HodItemReductionModal from '@/components/ui/HodItemReductionModal';
 
 export default function Home() {
   const { currentUser, activeRole, isAppLoading } = useApp();
@@ -28,6 +30,10 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-[#f8fafc] dark:bg-[#0c0e12] text-zinc-900 dark:text-zinc-100 transition-colors">
       {/* Top Header Navigation Bar */}
       <Navbar />
+
+      {/* Immediate Login Pop-up Notifications for PM/Finance (Price Changes) & HoD (Quantity Reductions) */}
+      <PriceChangeAlertModal />
+      <HodItemReductionModal />
 
       {/* Main Spacious Workspace Container */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">

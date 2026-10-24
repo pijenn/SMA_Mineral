@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { formatCurrency, formatDate, formatDateTime, isAllDepartments } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, isAllDepartments, cleanSystemNotes } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import {
   DollarSign,
@@ -1092,15 +1092,15 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                           </div>
                         )}
 
-                        {item.logistics_notes && (
+                        {cleanSystemNotes(item.logistics_notes) && (
                           <div className="text-[11px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-lg inline-block">
-                            Catatan Logistik: {item.logistics_notes}
+                            Catatan Logistik: {cleanSystemNotes(item.logistics_notes)}
                           </div>
                         )}
 
-                        {item.pm_item_approval_notes && (
+                        {cleanSystemNotes(item.pm_item_approval_notes) && (
                           <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block">
-                            Catatan Finance: {item.pm_item_approval_notes}
+                            Catatan Finance: {cleanSystemNotes(item.pm_item_approval_notes)}
                           </div>
                         )}
 
@@ -1328,9 +1328,9 @@ export function FinanceDashboard({ activeTab = 'budget', onTabChange }: FinanceD
                           </span>
                         </div>
 
-                        {item.pm_item_approval_notes && (
+                        {cleanSystemNotes(item.pm_item_approval_notes) && (
                           <div className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg inline-block mt-1">
-                            Catatan Finance: {item.pm_item_approval_notes}
+                            Catatan Finance: {cleanSystemNotes(item.pm_item_approval_notes)}
                           </div>
                         )}
                       </div>

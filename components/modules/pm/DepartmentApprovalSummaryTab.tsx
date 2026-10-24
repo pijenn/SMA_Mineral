@@ -9,6 +9,7 @@ import {
   DepartmentApprovalSummary,
 } from '@/lib/excelGenerator';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { generateDepartmentExpensesPdf } from '@/lib/pdfGenerator';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import {
   FileSpreadsheet,
@@ -42,6 +43,8 @@ export function DepartmentApprovalSummaryTab({
     departments,
     routineItems,
     currentUser,
+    financeReport,
+    transactions,
   } = useApp();
 
   const [scope, setScope] = useState<ApprovalSummaryScope>('all');
@@ -49,6 +52,7 @@ export function DepartmentApprovalSummaryTab({
   const [includeEmptyDepts, setIncludeEmptyDepts] = useState(false);
   const [expandedDeptIds, setExpandedDeptIds] = useState<Record<string, boolean>>({});
   const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingDeptPdf, setIsGeneratingDeptPdf] = useState(false);
 
   // Compute department summary data
   const summaryResult = useMemo(() => {
@@ -101,6 +105,26 @@ export function DepartmentApprovalSummaryTab({
     }
   };
 
+  const handleDownloadDepartmentPdf = () => {
+    try {
+      setIsGeneratingDeptPdf(true);
+      generateDepartmentExpensesPdf({
+        period: activePeriod,
+        financeReport,
+        transactions,
+        requestItems,
+        routineItems,
+        departments,
+        currentUser,
+      });
+    } catch (err) {
+      console.error('Error exporting per-department PDF:', err);
+      alert('Terjadi kesalahan saat mengunduh PDF laporan per departemen.');
+    } finally {
+      setIsGeneratingDeptPdf(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Banner & Primary Export Button */}
@@ -136,6 +160,20 @@ export function DepartmentApprovalSummaryTab({
 
         {/* Action Button */}
         <div className="flex flex-wrap items-center gap-2.5 self-start md:self-center shrink-0">
+          <button
+            onClick={handleDownloadDepartmentPdf}
+            disabled={isGeneratingDeptPdf}
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            title="Unduh Laporan PDF Pengeluaran Terpisah per Departemen (12 Departemen)"
+          >
+            <Building2 className="w-4 h-4" />
+            <span>
+              {isGeneratingDeptPdf
+                ? 'Mencetak PDF...'
+                : 'Unduh PDF Laporan per Departemen (12 Dept)'}
+            </span>
+          </button>
+
           <button
             onClick={handleDownloadExcel}
             disabled={isExporting || summaryResult.grandTotalItems === 0}

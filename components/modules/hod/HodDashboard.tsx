@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments, cleanSystemNotes } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import { RequestModal } from './RequestModal';
@@ -410,6 +410,11 @@ export function HodDashboard({ activeTab = 'overview', onTabChange }: HodDashboa
                             <span className="italic text-zinc-400">&ldquo;{item.specification}&rdquo;</span>
                           )}
                         </div>
+                        {cleanSystemNotes(item.pm_item_approval_notes) && (
+                          <div className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg inline-block mt-1">
+                            <strong>Catatan Finance / Status Kuantitas:</strong> {cleanSystemNotes(item.pm_item_approval_notes)}
+                          </div>
+                        )}
                       </div>
                     </div>
 

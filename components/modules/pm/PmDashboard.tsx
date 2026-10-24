@@ -3,11 +3,11 @@
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ProcurementRequestItem, PriorityLevel } from '@/lib/types';
-import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments, cleanSystemNotes } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import { UserManagementModal } from './UserManagementModal';
-import { generateWeeklyReportPdf } from '@/lib/pdfGenerator';
+import { generateWeeklyReportPdf, generateDepartmentExpensesPdf } from '@/lib/pdfGenerator';
 import { DepartmentApprovalSummaryTab } from './DepartmentApprovalSummaryTab';
 import {
   generateDepartmentApprovalExcel,
@@ -176,6 +176,27 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
     }
   };
 
+  const [isGeneratingDeptPdf, setIsGeneratingDeptPdf] = useState(false);
+  const handleDownloadDepartmentPdf = () => {
+    try {
+      setIsGeneratingDeptPdf(true);
+      generateDepartmentExpensesPdf({
+        period: activePeriod,
+        financeReport,
+        transactions,
+        requestItems,
+        routineItems,
+        departments,
+        currentUser,
+      });
+    } catch (err) {
+      console.error('Error generating per-department PDF:', err);
+      alert('Terjadi kesalahan saat mencetak PDF laporan pengeluaran per departemen.');
+    } finally {
+      setIsGeneratingDeptPdf(false);
+    }
+  };
+
   // Department scope check
   const isAllDept = isAllDepartments(selectedDepartmentId);
   const deptItems = isAllDept
@@ -340,6 +361,16 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
           >
             <Download className="w-4 h-4" />
             <span>{isGeneratingPdf ? 'Mencetak PDF...' : 'Unduh PDF Laporan'}</span>
+          </button>
+
+          <button
+            onClick={handleDownloadDepartmentPdf}
+            disabled={isGeneratingDeptPdf}
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+            title="Unduh Laporan Pengeluaran PDF Terpisah per Departemen (12 Departemen)"
+          >
+            <Building2 className="w-4 h-4" />
+            <span>{isGeneratingDeptPdf ? 'Mencetak PDF...' : 'Unduh PDF per Departemen'}</span>
           </button>
 
           <button
@@ -742,16 +773,16 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
                         </div>
 
                         {/* Note logs from Finance and Logistics */}
-                        {(item.pm_item_approval_notes || item.logistics_notes || item.pm_buy_approval_notes) && (
+                        {(cleanSystemNotes(item.pm_item_approval_notes) || cleanSystemNotes(item.logistics_notes) || item.pm_buy_approval_notes) && (
                           <div className="space-y-1 pt-1">
-                            {item.pm_item_approval_notes && (
+                            {cleanSystemNotes(item.pm_item_approval_notes) && (
                               <div className="text-[11px] text-blue-700 dark:text-blue-300 bg-blue-500/10 px-2.5 py-1 rounded-lg">
-                                <strong>Log Finance / Urgensi:</strong> {item.pm_item_approval_notes}
+                                <strong>Log Finance / Urgensi:</strong> {cleanSystemNotes(item.pm_item_approval_notes)}
                               </div>
                             )}
-                            {item.logistics_notes && (
+                            {cleanSystemNotes(item.logistics_notes) && (
                               <div className="text-[11px] text-teal-700 dark:text-teal-300 bg-teal-500/10 px-2.5 py-1 rounded-lg">
-                                <strong>Log Logistik:</strong> {item.logistics_notes}
+                                <strong>Log Logistik:</strong> {cleanSystemNotes(item.logistics_notes)}
                               </div>
                             )}
                             {item.pm_buy_approval_notes && (
@@ -1079,6 +1110,16 @@ export function PmDashboard({ activeTab = 'monitoring', onTabChange }: PmDashboa
               >
                 <Download className="w-4 h-4" />
                 <span>{isGeneratingPdf ? 'Mencetak PDF...' : 'Unduh PDF Laporan Mingguan'}</span>
+              </button>
+
+              <button
+                onClick={handleDownloadDepartmentPdf}
+                disabled={isGeneratingDeptPdf}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
+                title="Unduh Laporan PDF Pengeluaran Terpisah untuk 12 Departemen"
+              >
+                <Building2 className="w-4 h-4" />
+                <span>{isGeneratingDeptPdf ? 'Mencetak PDF...' : 'Unduh PDF Laporan per Departemen'}</span>
               </button>
 
               {financeReport.status !== 'approved_by_pm' ? (

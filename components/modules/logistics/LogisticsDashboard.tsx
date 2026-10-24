@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { ProcurementRequestItem, PriorityLevel, DeliveryStatusType } from '@/lib/types';
-import { formatCurrency, formatDate, isAllDepartments } from '@/lib/utils';
+import { formatCurrency, formatDate, isAllDepartments, cleanSystemNotes } from '@/lib/utils';
 import { PriorityBadge, LifecycleBadge, DeliveryBadge } from '@/components/ui/StatusBadge';
 import { LiveStepper } from '@/components/ui/LiveStepper';
 import {
@@ -109,6 +109,8 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [vendorName, setVendorName] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer (Mandiri)');
+  const [purchaseActualUnitPrice, setPurchaseActualUnitPrice] = useState<number>(0);
+  const [purchasePriceChangeNotes, setPurchasePriceChangeNotes] = useState<string>('');
   const [receiptUrl, setReceiptUrl] = useState('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
   const [receiptFileName, setReceiptFileName] = useState('');
   const [receiptFileType, setReceiptFileType] = useState('image/jpeg');
@@ -290,6 +292,8 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     setVendorName(defaultVendor);
     const invNum = `INV-${Date.now().toString().slice(-4)}`;
     setInvoiceNumber(invNum);
+    setPurchaseActualUnitPrice(item.final_unit_price || 0);
+    setPurchasePriceChangeNotes('');
     setReceiptUrl('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
     setReceiptFileName(`Kuitansi_${invNum}.jpg`);
     setReceiptFileType('image/jpeg');
@@ -316,7 +320,10 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     e.preventDefault();
     if (!purchaseModalItem) return;
 
-    const total = purchaseModalItem.quantity * (purchaseModalItem.final_unit_price || 0);
+    const approvedUnitPrice = purchaseModalItem.final_unit_price || 0;
+    const effectiveUnitPrice =
+      purchaseActualUnitPrice >= 0 ? Number(purchaseActualUnitPrice) : approvedUnitPrice;
+    const total = purchaseModalItem.quantity * effectiveUnitPrice;
 
     recordPurchase(
       {
@@ -330,11 +337,17 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         notes: `Pembelian operasional ${purchaseModalItem.quantity} ${purchaseModalItem.unit} untuk Dept ${purchaseModalItem.department_name}`,
       },
       [purchaseModalItem.id],
-      receiptUrl ? {
-        file_url: receiptUrl,
-        file_name: receiptFileName || `Kuitansi_${invoiceNumber}.jpg`,
-        file_type: receiptFileType || 'image/jpeg',
-      } : undefined
+      receiptUrl
+        ? {
+            file_url: receiptUrl,
+            file_name: receiptFileName || `Kuitansi_${invoiceNumber}.jpg`,
+            file_type: receiptFileType || 'image/jpeg',
+          }
+        : undefined,
+      {
+        actualUnitPrice: effectiveUnitPrice,
+        priceChangeNotes: purchasePriceChangeNotes,
+      }
     );
 
     setPurchaseModalItem(null);
@@ -904,6 +917,54 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                 </select>
               </div>
 
+              {/* Actual Purchase Unit Price & Automatic Notification to PM & Finance if Changed */}
+              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-zinc-700 dark:text-zinc-300">
+                    Harga Satuan Aktual Pembelian (IDR / {purchaseModalItem.unit})
+                  </span>
+                  <span className="text-[11px] text-zinc-500 font-mono">
+                    Disetujui: {formatCurrency(purchaseModalItem.final_unit_price || 0)}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  value={purchaseActualUnitPrice}
+                  onChange={(e) => setPurchaseActualUnitPrice(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
+                  required
+                />
+                {Math.abs(
+                  Number(purchaseActualUnitPrice) - (purchaseModalItem.final_unit_price || 0)
+                ) > 0.001 && (
+                  <div className="space-y-2 pt-1">
+                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                      <div>
+                        <strong>Perubahan Harga Terdeteksi:</strong> Harga aktual{' '}
+                        {Number(purchaseActualUnitPrice) > (purchaseModalItem.final_unit_price || 0)
+                          ? 'LEBIH TINGGI'
+                          : 'LEBIH RENDAH'}{' '}
+                        dari harga yang disetujui PM & Finance. Pop-up notifikasi otomatis akan ditampilkan kepada <strong>PM</strong> dan <strong>Finance</strong> saat login.
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Catatan Perubahan Harga untuk PM & Finance (Opsional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Contoh: Kenaikan harga pasar vendor / diskon pembelian tunai..."
+                        value={purchasePriceChangeNotes}
+                        onChange={(e) => setPurchasePriceChangeNotes(e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
@@ -993,7 +1054,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
               </div>
 
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-700 dark:text-emerald-400">
-                Total Biaya: <strong>{formatCurrency(purchaseModalItem.quantity * (purchaseModalItem.final_unit_price || 0))}</strong> akan memotong kuota kas mingguan dan masuk ke queue verifikasi Finance.
+                Total Biaya Aktual: <strong>{formatCurrency(purchaseModalItem.quantity * (Number(purchaseActualUnitPrice) >= 0 ? Number(purchaseActualUnitPrice) : (purchaseModalItem.final_unit_price || 0)))}</strong> akan memotong kuota kas mingguan dan masuk ke queue verifikasi Finance.
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">

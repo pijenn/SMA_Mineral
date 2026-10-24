@@ -6,7 +6,7 @@ import {
   Department,
   UserProfile,
 } from './types';
-import { formatCurrency, formatDate } from './utils';
+import { formatCurrency, formatDate, cleanSystemNotes } from './utils';
 
 export type ApprovalSummaryScope = 'all' | 'buy_only' | 'urgency_only' | 'all_requests';
 
@@ -372,7 +372,8 @@ export function generateDepartmentApprovalExcel({
           ? 'Diterima di Site'
           : 'Siap Pembelian (PO)';
 
-      const notes = item.pm_buy_approval_notes || item.pm_item_approval_notes || '-';
+      const rawNotes = item.pm_buy_approval_notes || item.pm_item_approval_notes || '-';
+      const notes = cleanSystemNotes(rawNotes) || '-';
 
       detailAoa.push([
         itemSequence++,

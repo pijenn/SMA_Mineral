@@ -20,7 +20,15 @@ import {
   PurchaseProof,
 } from '@/lib/types';
 import { EditableImportedItem } from '@/lib/excelParser';
-import { formatCurrency } from '@/lib/utils';
+import {
+  formatCurrency,
+  upsertPriceAlertInNotes,
+  markPriceAlertAckInNotes,
+  parsePriceAlertFromNotes,
+  upsertHodReductionInNotes,
+  resolveHodReductionInNotes,
+  parseHodReductionFromNotes,
+} from '@/lib/utils';
 
 // Initial Fallback / Seed Constants if database table is initially blank
 const INITIAL_DEPARTMENTS: Department[] = [
@@ -139,8 +147,20 @@ interface AppContextType {
       file_url: string;
       file_name?: string;
       file_type?: string;
+    },
+    options?: {
+      actualUnitPrice?: number;
+      priceChangeNotes?: string;
     }
   ) => Promise<void>;
+  acknowledgePriceChangeAlerts: (
+    role: 'project_manager' | 'admin_finance',
+    itemIds?: string[]
+  ) => Promise<void>;
+  respondToItemReduction: (
+    itemId: string,
+    decision: 'postpone_next_week' | 'reduce_without_delay'
+  ) => Promise<{ success: boolean; error?: string }>;
   verifyProofByFinance: (proofId: string, approved: boolean, notes?: string) => Promise<void>;
   updateDeliveryStatus: (
     itemId: string,
@@ -1007,10 +1027,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('sma_active_period_id', finalPeriod.id);
       }
 
+      // Carry over any items postponed by HoD to next week (deferred_next_week)
+      const deferredNextWeekItems = allRequestItems.filter(
+        (i) => i.lifecycle_status === 'deferred_next_week'
+      );
+      if (deferredNextWeekItems.length > 0 && finalPeriod?.id) {
+        const deferredIds = deferredNextWeekItems.map((i) => i.id);
+        setAllRequestItems((prev) =>
+          prev.map((item) =>
+            deferredIds.includes(item.id)
+              ? {
+                  ...item,
+                  origin_period_id: finalPeriod.id,
+                  period_name: finalPeriod.period_name,
+                  lifecycle_status: 'submitted' as ItemLifecycleStatus,
+                  is_rollover: true,
+                }
+              : item
+          )
+        );
+        try {
+          await supabase
+            .from('procurement_request_items')
+            .update({
+              origin_period_id: finalPeriod.id,
+              lifecycle_status: 'submitted',
+              is_rollover: true,
+            })
+            .in('id', deferredIds);
+        } catch (rolloverErr) {
+          console.error('Supabase rollover deferred_next_week items error:', rolloverErr);
+        }
+      }
+
       const notif: AppNotification = {
         id: `notif-${Date.now()}`,
         title: 'Periode Pengadaan Baru Diaktifkan',
-        message: `${params.period_name} telah diaktifkan oleh PM. Item pengadaan di-reset dan kas dimulai dari Rp 0 + Surplus (${formatCurrency(surplus)}).`,
+        message: `${params.period_name} telah diaktifkan oleh PM. Item pengadaan di-reset dan kas dimulai dari Rp 0 + Surplus (${formatCurrency(surplus)}).${deferredNextWeekItems.length > 0 ? ` ${deferredNextWeekItems.length} barang tertunda minggu depan otomatis masuk ke periode ini.` : ''}`,
         type: 'general',
         is_read: false,
         created_at: new Date().toISOString(),
@@ -1229,6 +1282,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Helper to push price change notifications to PM & Finance
+  const pushPriceChangeNotifications = async (
+    item: ProcurementRequestItem,
+    oldUnitPrice: number,
+    newUnitPrice: number,
+    reason?: string
+  ) => {
+    const itemName = item.routine_item?.name || item.custom_item_name || 'Barang Pengadaan';
+    const qty = item.quantity || 1;
+    const oldTotal = oldUnitPrice * qty;
+    const newTotal = newUnitPrice * qty;
+    const isHigher = newUnitPrice > oldUnitPrice;
+    const diffDirection = isHigher ? 'NAIK (Lebih Tinggi)' : 'TURUN (Lebih Rendah)';
+    const diffUnit = Math.abs(newUnitPrice - oldUnitPrice);
+    const diffTotal = Math.abs(newTotal - oldTotal);
+    const nowIso = new Date().toISOString();
+
+    const pmUsers = users.filter((u) => u.role === 'project_manager');
+    const financeUsers = users.filter((u) => u.role === 'admin_finance');
+    const recipients = [
+      ...(pmUsers.length > 0 ? pmUsers : [{ id: undefined, role: 'project_manager' as UserRole }]),
+      ...(financeUsers.length > 0 ? financeUsers : [{ id: undefined, role: 'admin_finance' as UserRole }]),
+    ];
+
+    const createdNotifs: AppNotification[] = recipients.map((rec, idx) => ({
+      id:
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `notif-price-${Date.now()}-${idx}`,
+      recipient_id: rec.id,
+      department_id: item.department_id,
+      title: `Perubahan Harga Pembelian (${diffDirection}): ${itemName}`,
+      message: `Harga satuan "${itemName}" (${qty} ${item.unit} - ${item.department_name || 'Departemen'}) berubah dari ${formatCurrency(oldUnitPrice)} menjadi ${formatCurrency(newUnitPrice)} (${isHigher ? '+' : '-'}${formatCurrency(diffUnit)}/unit | Total ${isHigher ? '+' : '-'}${formatCurrency(diffTotal)}).${reason?.trim() ? ` Catatan Logistik: "${reason.trim()}"` : ''}`,
+      type: 'purchase_update',
+      related_item_id: item.id,
+      is_read: false,
+      created_at: nowIso,
+    }));
+
+    setNotifications((prev) => [...createdNotifs, ...prev]);
+
+    const dbRows = createdNotifs
+      .filter((n) => Boolean(n.recipient_id))
+      .map((n) => ({
+        id: n.id,
+        recipient_id: n.recipient_id,
+        department_id: n.department_id || null,
+        title: n.title,
+        message: n.message,
+        type: n.type,
+        related_item_id: n.related_item_id || null,
+        is_read: false,
+        created_at: n.created_at,
+      }));
+
+    if (dbRows.length > 0) {
+      try {
+        await supabase.from('notifications').insert(dbRows);
+      } catch (err) {
+        console.warn('Supabase price change notification insert warning:', err);
+      }
+    }
+  };
+
   const updateItemLogistics = async (
     itemId: string,
     updates: {
@@ -1241,13 +1358,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   ) => {
     const target = requestItems.find((i) => i.id === itemId);
-    const newUnitPrice = updates.final_unit_price !== undefined ? updates.final_unit_price : target?.final_unit_price || 0;
+    const oldUnitPrice = target?.final_unit_price || 0;
+    const newUnitPrice = updates.final_unit_price !== undefined ? updates.final_unit_price : oldUnitPrice;
     const newEstimatedTotal = (target?.quantity || 1) * newUnitPrice;
+
+    const wasApprovedOrPurchased = Boolean(
+      target &&
+        (target.pm_item_approval === 'approved' ||
+          target.pm_buy_approval === 'approved' ||
+          [
+            'pm_item_approved',
+            'pm_buy_approved',
+            'purchased',
+            'processing_delivery',
+            'in_transit',
+            'received_at_site',
+          ].includes(target.lifecycle_status))
+    );
+
+    let resolvedLogisticsNotes =
+      updates.logistics_notes !== undefined ? updates.logistics_notes : target?.logistics_notes;
+
+    const priceChangedAfterApproval =
+      target &&
+      updates.final_unit_price !== undefined &&
+      oldUnitPrice > 0 &&
+      Math.abs(newUnitPrice - oldUnitPrice) > 0.001 &&
+      wasApprovedOrPurchased;
+
+    if (priceChangedAfterApproval && target) {
+      resolvedLogisticsNotes = upsertPriceAlertInNotes(target.logistics_notes, updates.logistics_notes, {
+        alertId: `pa-${target.id}-${Date.now()}`,
+        itemId: target.id,
+        oldUnitPrice,
+        newUnitPrice,
+        quantity: target.quantity || 1,
+        pmAck: false,
+        finAck: false,
+        reason: updates.logistics_notes || 'Penyesuaian harga oleh Logistik',
+        timestamp: Date.now(),
+      });
+    }
 
     const mergedUpdates = {
       ...updates,
       final_unit_price: newUnitPrice,
       estimated_total_price: newEstimatedTotal,
+      logistics_notes: resolvedLogisticsNotes,
       lifecycle_status: updates.lifecycle_status || target?.lifecycle_status || 'validated',
     };
 
@@ -1263,6 +1420,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('procurement_request_items').update(dbPayload).eq('id', itemId);
     } catch (err) {
       console.error('Supabase item update error:', err);
+    }
+
+    if (priceChangedAfterApproval && target) {
+      await pushPriceChangeNotifications(target, oldUnitPrice, newUnitPrice, updates.logistics_notes);
     }
   };
 
@@ -1290,18 +1451,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
-    const isIncrease = newQuantity > target.quantity;
+    const originalQuantity = target.quantity;
+    const isIncrease = newQuantity > originalQuantity;
+    const isReduction = newQuantity < originalQuantity;
+    const reducedQuantity = isReduction ? originalQuantity - newQuantity : 0;
     const actionLabel = isIncrease ? 'ditambah' : 'dikurangi';
     const actionVerb = isIncrease ? 'menambah' : 'mengurangi';
 
     const unitPrice = target.final_unit_price || target.routine_item?.estimated_unit_price || 0;
     const newEstimatedTotal = newQuantity * unitPrice;
     const noteText = reason?.trim()
-      ? `[Finance: Qty ${actionLabel} dari ${target.quantity} -> ${newQuantity} ${target.unit}. Alasan: ${reason.trim()}]`
-      : `[Finance: Qty ${actionLabel} dari ${target.quantity} -> ${newQuantity} ${target.unit}]`;
-    const updatedNotes = target.pm_item_approval_notes
+      ? `[Finance: Qty ${actionLabel} dari ${originalQuantity} -> ${newQuantity} ${target.unit}. Alasan: ${reason.trim()}]`
+      : `[Finance: Qty ${actionLabel} dari ${originalQuantity} -> ${newQuantity} ${target.unit}]`;
+    let updatedNotes = target.pm_item_approval_notes
       ? `${target.pm_item_approval_notes} | ${noteText}`
       : noteText;
+
+    if (isReduction) {
+      updatedNotes = upsertHodReductionInNotes(target.pm_item_approval_notes, noteText, {
+        alertId: `hr-${target.id}-${Date.now()}`,
+        itemId: target.id,
+        originalQuantity,
+        newQuantity,
+        reducedQuantity,
+        reason: reason?.trim() || 'Penyesuaian alokasi anggaran oleh Finance',
+        timestamp: Date.now(),
+      });
+    }
 
     const mergedUpdates = {
       quantity: newQuantity,
@@ -1329,17 +1505,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+    const hodUser =
+      users.find((u) => u.department_id === target.department_id && u.role === 'hod') ||
+      users.find((u) => u.department_id === target.department_id);
+
+    const notifId =
+      typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `notif-${Date.now()}`;
     const notif: AppNotification = {
-      id: `notif-${Date.now()}`,
+      id: notifId,
+      recipient_id: hodUser?.id,
       department_id: target.department_id,
-      title: 'Kuantitas Barang Disesuaikan oleh Finance',
-      message: `Admin Finance telah ${actionVerb} kuantitas ${itemName} (${target.department_name || 'Departemen'}) dari ${target.quantity} menjadi ${newQuantity} ${target.unit}.${reason?.trim() ? ` Alasan: "${reason.trim()}"` : ''}`,
-      type: 'general',
+      title: isReduction
+        ? `Kuantitas Barang Dikurangi oleh Finance: ${itemName}`
+        : 'Kuantitas Barang Disesuaikan oleh Finance',
+      message: `Admin Finance telah ${actionVerb} kuantitas ${itemName} (${target.department_name || 'Departemen'}) dari ${originalQuantity} menjadi ${newQuantity} ${target.unit}${isReduction ? ` (berkurang ${reducedQuantity} ${target.unit})` : ''}.${reason?.trim() ? ` Alasan: "${reason.trim()}"` : ''}${isReduction ? ' Silakan pilih opsi menunda sisa barang ke minggu depan atau kurangi tanpa ditunda.' : ''}`,
+      type: isReduction ? 'prioritize_confirmation' : 'general',
       related_item_id: itemId,
       is_read: false,
       created_at: new Date().toISOString(),
     };
     setNotifications((prev) => [notif, ...prev]);
+
+    if (hodUser?.id) {
+      try {
+        await supabase.from('notifications').insert([
+          {
+            id: notif.id,
+            recipient_id: hodUser.id,
+            department_id: target.department_id || null,
+            title: notif.title,
+            message: notif.message,
+            type: notif.type,
+            related_item_id: itemId,
+            is_read: false,
+            created_at: notif.created_at,
+          },
+        ]);
+      } catch (notifErr) {
+        console.warn('Supabase adjustItemQuantity notification warning:', notifErr);
+      }
+    }
 
     return { success: true };
   };
@@ -1365,15 +1570,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: 'Harga satuan tidak boleh bernilai negatif.' };
     }
 
+    const oldUnitPrice = target.final_unit_price || 0;
+    const priceChanged = Math.abs(newUnitPrice - oldUnitPrice) > 0.001;
+    const wasApprovedOrPurchased =
+      oldUnitPrice > 0 ||
+      target.pm_item_approval === 'approved' ||
+      target.pm_buy_approval === 'approved' ||
+      [
+        'pm_item_approved',
+        'pm_buy_approved',
+        'purchased',
+        'processing_delivery',
+        'in_transit',
+        'received_at_site',
+      ].includes(target.lifecycle_status);
+
     const newEstimatedTotal = (target.quantity || 1) * newUnitPrice;
+    const isHigher = newUnitPrice > oldUnitPrice;
+    const diffLabel =
+      oldUnitPrice > 0 && priceChanged
+        ? ` (${isHigher ? 'Naik' : 'Turun'} dari ${formatCurrency(oldUnitPrice)}/unit)`
+        : '';
     const noteText = options?.notes?.trim()
-      ? `[Logistik penyesuaian harga: ${formatCurrency(newUnitPrice)}/unit. Catatan: ${options.notes.trim()}]`
+      ? `[Logistik penyesuaian harga: ${formatCurrency(newUnitPrice)}/unit${diffLabel}. Catatan: ${options.notes.trim()}]`
+      : priceChanged && oldUnitPrice > 0
+      ? `[Logistik penyesuaian harga: ${formatCurrency(oldUnitPrice)} -> ${formatCurrency(newUnitPrice)}/unit]`
       : undefined;
-    const updatedLogisticsNotes = noteText
+
+    let updatedLogisticsNotes = noteText
       ? target.logistics_notes
         ? `${target.logistics_notes} | ${noteText}`
         : noteText
       : target.logistics_notes;
+
+    // Embed PRICE_ALERT metadata for PM & Finance login pop-up whenever price changes on a priced/approved/purchased item
+    if (priceChanged && wasApprovedOrPurchased) {
+      updatedLogisticsNotes = upsertPriceAlertInNotes(target.logistics_notes, noteText, {
+        alertId: `pa-${target.id}-${Date.now()}`,
+        itemId: target.id,
+        oldUnitPrice,
+        newUnitPrice,
+        quantity: target.quantity || 1,
+        pmAck: false,
+        finAck: false,
+        reason: options?.notes?.trim() || 'Penyesuaian harga aktual pembelian oleh Logistik',
+        timestamp: Date.now(),
+      });
+    }
 
     const mergedUpdates: Partial<ProcurementRequestItem> = {
       final_unit_price: newUnitPrice,
@@ -1413,26 +1656,83 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.error('Supabase adjustItemPrice error:', err);
     }
 
-    const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
-    const notif: AppNotification = {
-      id: `notif-${Date.now()}`,
-      department_id: target.department_id,
-      title: 'Penyesuaian Harga oleh Logistik',
-      message: `Admin Logistik telah menyesuaikan harga ${itemName} (${target.department_name || 'Departemen'}) menjadi ${formatCurrency(newUnitPrice)} / ${target.unit}.${options?.notes?.trim() ? ` Catatan: "${options.notes.trim()}"` : ''}`,
-      type: 'general',
-      related_item_id: itemId,
-      is_read: false,
-      created_at: new Date().toISOString(),
-    };
-    setNotifications((prev) => [notif, ...prev]);
+    // If item was already purchased, also sync the associated transaction total_amount & journal entries
+    if (
+      priceChanged &&
+      ['purchased', 'processing_delivery', 'in_transit', 'received_at_site'].includes(
+        target.lifecycle_status
+      )
+    ) {
+      const itemName = target.routine_item?.name || target.custom_item_name || '';
+      const oldCost = (target.quantity || 1) * oldUnitPrice;
+      const associatedTx = allTransactions.find((tx) => {
+        const matchesPeriod = tx.period_id === (target.origin_period_id || activePeriod.id);
+        const matchesNotes =
+          tx.notes &&
+          (tx.notes.includes(itemName) || tx.notes.includes(target.department_name || ''));
+        const matchesCost = Math.abs(tx.total_amount - oldCost) < 0.01;
+        return matchesPeriod && (matchesNotes || matchesCost);
+      });
+
+      if (associatedTx) {
+        const updatedTxAmount = newEstimatedTotal;
+        setAllTransactions((prev) =>
+          prev.map((t) => (t.id === associatedTx.id ? { ...t, total_amount: updatedTxAmount } : t))
+        );
+        setTransactions((prev) =>
+          prev.map((t) => (t.id === associatedTx.id ? { ...t, total_amount: updatedTxAmount } : t))
+        );
+        setJournalEntries((prev) =>
+          prev.map((j) => (j.transaction_id === associatedTx.id ? { ...j, amount: updatedTxAmount } : j))
+        );
+
+        try {
+          await supabase
+            .from('purchase_transactions')
+            .update({ total_amount: updatedTxAmount })
+            .eq('id', associatedTx.id);
+          await supabase
+            .from('financial_journal_entries')
+            .update({ amount: updatedTxAmount })
+            .eq('transaction_id', associatedTx.id);
+        } catch (txSyncErr) {
+          console.warn('Supabase sync transaction amount on adjustItemPrice warning:', txSyncErr);
+        }
+      }
+    }
+
+    if (priceChanged && wasApprovedOrPurchased) {
+      await pushPriceChangeNotifications(target, oldUnitPrice, newUnitPrice, options?.notes);
+    } else {
+      const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+      const notif: AppNotification = {
+        id: `notif-${Date.now()}`,
+        department_id: target.department_id,
+        title: 'Penyesuaian Harga oleh Logistik',
+        message: `Admin Logistik telah menyesuaikan harga ${itemName} (${target.department_name || 'Departemen'}) menjadi ${formatCurrency(newUnitPrice)} / ${target.unit}.${options?.notes?.trim() ? ` Catatan: "${options.notes.trim()}"` : ''}`,
+        type: 'general',
+        related_item_id: itemId,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+    }
 
     return { success: true };
   };
 
   const approveItemUrgency = async (itemId: string, approved: boolean, notes?: string) => {
+    const target = requestItems.find((i) => i.id === itemId);
+    const existingNotes = target?.pm_item_approval_notes;
+    const mergedApprovalNotes = notes?.trim()
+      ? existingNotes
+        ? `${existingNotes} | ${notes.trim()}`
+        : notes.trim()
+      : existingNotes;
+
     const updates = {
       pm_item_approval: (approved ? 'approved' : 'rejected') as 'approved' | 'rejected',
-      pm_item_approval_notes: notes || undefined,
+      pm_item_approval_notes: mergedApprovalNotes,
       lifecycle_status: (approved ? 'pm_item_approved' : 'pm_item_rejected') as ItemLifecycleStatus,
     };
 
@@ -1452,21 +1752,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const batchApproveUrgency = async (itemIds: string[], approved: boolean, notes?: string) => {
     if (!itemIds || itemIds.length === 0) return;
-    const updates = {
+
+    const baseUpdates = {
       pm_item_approval: (approved ? 'approved' : 'rejected') as 'approved' | 'rejected',
-      pm_item_approval_notes: notes || undefined,
       lifecycle_status: (approved ? 'pm_item_approved' : 'pm_item_rejected') as ItemLifecycleStatus,
     };
 
     setAllRequestItems((prev) =>
-      prev.map((item) => (itemIds.includes(item.id) ? { ...item, ...updates } : item))
+      prev.map((item) => {
+        if (!itemIds.includes(item.id)) return item;
+        const mergedNotes = notes?.trim()
+          ? item.pm_item_approval_notes
+            ? `${item.pm_item_approval_notes} | ${notes.trim()}`
+            : notes.trim()
+          : item.pm_item_approval_notes;
+        return { ...item, ...baseUpdates, pm_item_approval_notes: mergedNotes };
+      })
     );
     setRequestItems((prev) =>
-      prev.map((item) => (itemIds.includes(item.id) ? { ...item, ...updates } : item))
+      prev.map((item) => {
+        if (!itemIds.includes(item.id)) return item;
+        const mergedNotes = notes?.trim()
+          ? item.pm_item_approval_notes
+            ? `${item.pm_item_approval_notes} | ${notes.trim()}`
+            : notes.trim()
+          : item.pm_item_approval_notes;
+        return { ...item, ...baseUpdates, pm_item_approval_notes: mergedNotes };
+      })
     );
 
     try {
-      await supabase.from('procurement_request_items').update(updates).in('id', itemIds);
+      await supabase.from('procurement_request_items').update(baseUpdates).in('id', itemIds);
     } catch (err) {
       console.error('Supabase batchApproveUrgency error:', err);
     }
@@ -1512,6 +1828,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       file_url: string;
       file_name?: string;
       file_type?: string;
+    },
+    options?: {
+      actualUnitPrice?: number;
+      priceChangeNotes?: string;
     }
   ) => {
     const txId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `tx-${Date.now()}`;
@@ -1542,11 +1862,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAllTransactions((prev) => [newTx, ...prev]);
     setTransactions((prev) => [newTx, ...prev]);
 
+    const priceChangedItems: Array<{
+      item: ProcurementRequestItem;
+      oldUnitPrice: number;
+      newUnitPrice: number;
+      updatedLogisticsNotes: string;
+    }> = [];
+
+    const itemUpdatesById: Record<
+      string,
+      {
+        final_unit_price?: number;
+        estimated_total_price?: number;
+        logistics_notes?: string;
+      }
+    > = {};
+
+    for (const id of itemIds) {
+      const target = requestItems.find((i) => i.id === id);
+      if (!target) continue;
+      const oldUnitPrice = target.final_unit_price || 0;
+      const hasActualPriceOverride =
+        options?.actualUnitPrice !== undefined &&
+        options.actualUnitPrice >= 0 &&
+        Math.abs(options.actualUnitPrice - oldUnitPrice) > 0.001;
+
+      if (hasActualPriceOverride && options?.actualUnitPrice !== undefined) {
+        const newUnitPrice = options.actualUnitPrice;
+        const isHigher = newUnitPrice > oldUnitPrice;
+        const noteText = `[Harga aktual pembelian PO ${txData.transaction_code}: ${formatCurrency(newUnitPrice)}/unit (${isHigher ? 'Naik' : 'Turun'} dari ${formatCurrency(oldUnitPrice)}/unit)${options.priceChangeNotes?.trim() ? ` - Catatan: ${options.priceChangeNotes.trim()}` : ''}]`;
+        const notesWithAlert = upsertPriceAlertInNotes(target.logistics_notes, noteText, {
+          alertId: `pa-${target.id}-${Date.now()}`,
+          itemId: target.id,
+          oldUnitPrice,
+          newUnitPrice,
+          quantity: target.quantity || 1,
+          pmAck: false,
+          finAck: false,
+          reason:
+            options.priceChangeNotes?.trim() ||
+            `Perubahan harga saat eksekusi PO ${txData.transaction_code} (${txData.vendor_name})`,
+          timestamp: Date.now(),
+        });
+
+        itemUpdatesById[id] = {
+          final_unit_price: newUnitPrice,
+          estimated_total_price: (target.quantity || 1) * newUnitPrice,
+          logistics_notes: notesWithAlert,
+        };
+        priceChangedItems.push({
+          item: target,
+          oldUnitPrice,
+          newUnitPrice,
+          updatedLogisticsNotes: notesWithAlert,
+        });
+      }
+    }
+
     setAllRequestItems((prev) =>
       prev.map((item) => {
         if (!itemIds.includes(item.id)) return item;
+        const extra = itemUpdatesById[item.id] || {};
         return {
           ...item,
+          ...extra,
           lifecycle_status: 'purchased',
           delivery_status: 'processing',
         };
@@ -1555,8 +1934,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setRequestItems((prev) =>
       prev.map((item) => {
         if (!itemIds.includes(item.id)) return item;
+        const extra = itemUpdatesById[item.id] || {};
         return {
           ...item,
+          ...extra,
           lifecycle_status: 'purchased',
           delivery_status: 'processing',
         };
@@ -1611,15 +1992,250 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       for (const id of itemIds) {
+        const extra = itemUpdatesById[id];
         await supabase
           .from('procurement_request_items')
-          .update({ lifecycle_status: 'purchased', delivery_status: 'processing' })
+          .update({
+            lifecycle_status: 'purchased',
+            delivery_status: 'processing',
+            ...(extra
+              ? {
+                  final_unit_price: extra.final_unit_price,
+                  logistics_notes: extra.logistics_notes,
+                }
+              : {}),
+          })
           .eq('id', id);
       }
       await supabase.from('financial_journal_entries').insert([jDebit, jCredit]);
     } catch (err) {
       console.error('Supabase recordPurchase error:', err);
     }
+
+    for (const changed of priceChangedItems) {
+      await pushPriceChangeNotifications(
+        changed.item,
+        changed.oldUnitPrice,
+        changed.newUnitPrice,
+        options?.priceChangeNotes || `Eksekusi PO ${txData.transaction_code}`
+      );
+    }
+  };
+
+  const acknowledgePriceChangeAlerts = async (
+    role: 'project_manager' | 'admin_finance',
+    itemIds?: string[]
+  ) => {
+    const targetItems = requestItems.filter((item) => {
+      if (itemIds && itemIds.length > 0 && !itemIds.includes(item.id)) return false;
+      const meta = parsePriceAlertFromNotes(item.id, item.logistics_notes);
+      if (!meta) return false;
+      return role === 'project_manager' ? !meta.pmAck : !meta.finAck;
+    });
+
+    if (targetItems.length === 0) return;
+
+    const updatedNotesMap: Record<string, string> = {};
+    targetItems.forEach((item) => {
+      updatedNotesMap[item.id] = markPriceAlertAckInNotes(item.logistics_notes, item.id, role);
+    });
+
+    setAllRequestItems((prev) =>
+      prev.map((item) =>
+        updatedNotesMap[item.id] !== undefined
+          ? { ...item, logistics_notes: updatedNotesMap[item.id] }
+          : item
+      )
+    );
+    setRequestItems((prev) =>
+      prev.map((item) =>
+        updatedNotesMap[item.id] !== undefined
+          ? { ...item, logistics_notes: updatedNotesMap[item.id] }
+          : item
+      )
+    );
+
+    // Also mark related notifications as read
+    const ackIds = new Set(targetItems.map((i) => i.id));
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.type === 'purchase_update' && n.related_item_id && ackIds.has(n.related_item_id)
+          ? { ...n, is_read: true }
+          : n
+      )
+    );
+
+    try {
+      for (const item of targetItems) {
+        await supabase
+          .from('procurement_request_items')
+          .update({ logistics_notes: updatedNotesMap[item.id] })
+          .eq('id', item.id);
+      }
+    } catch (err) {
+      console.error('Supabase acknowledgePriceChangeAlerts error:', err);
+    }
+  };
+
+  const respondToItemReduction = async (
+    itemId: string,
+    decision: 'postpone_next_week' | 'reduce_without_delay'
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target =
+      requestItems.find((i) => i.id === itemId) || allRequestItems.find((i) => i.id === itemId);
+    if (!target) {
+      return { success: false, error: 'Item pengadaan tidak ditemukan.' };
+    }
+
+    const reductionMeta = parseHodReductionFromNotes(target.id, target.pm_item_approval_notes);
+    const reducedQuantity = reductionMeta?.reducedQuantity || 1;
+    const originalQuantity = reductionMeta?.originalQuantity || target.quantity + reducedQuantity;
+    const newQuantity = reductionMeta?.newQuantity || target.quantity;
+
+    const decisionNote =
+      decision === 'postpone_next_week'
+        ? `[Konfirmasi HoD: Sisa ${reducedQuantity} ${target.unit} ditunda & otomatis diajukan untuk minggu depan]`
+        : `[Konfirmasi HoD: Diterima pengurangan menjadi ${newQuantity} ${target.unit} tanpa penundaan]`;
+
+    const finalApprovalNotes = resolveHodReductionInNotes(
+      target.pm_item_approval_notes,
+      decisionNote,
+      decision === 'postpone_next_week' ? 'postponed' : 'accepted',
+      reducedQuantity
+    );
+
+    // 1. Update original item notes to resolve the pending pop-up
+    setAllRequestItems((prev) =>
+      prev.map((item) =>
+        item.id === itemId ? { ...item, pm_item_approval_notes: finalApprovalNotes } : item
+      )
+    );
+    setRequestItems((prev) =>
+      prev.map((item) =>
+        item.id === itemId ? { ...item, pm_item_approval_notes: finalApprovalNotes } : item
+      )
+    );
+
+    try {
+      await supabase
+        .from('procurement_request_items')
+        .update({ pm_item_approval_notes: finalApprovalNotes })
+        .eq('id', itemId);
+    } catch (err) {
+      console.error('Supabase respondToItemReduction update error:', err);
+    }
+
+    // 2. If HoD chose to postpone the reduced quantity to next week, automatically create a deferred request item for the reduced amount
+    if (decision === 'postpone_next_week' && reducedQuantity > 0) {
+      const deferredItemId =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `item-deferred-${Date.now()}`;
+      const unitPrice = target.final_unit_price || target.routine_item?.estimated_unit_price || 0;
+      const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+      const rolloverNote = `[Otomatis diajukan untuk Minggu Depan (Rollover Pengurangan Finance): ${reducedQuantity} ${target.unit} dari pengajuan awal ${originalQuantity} ${target.unit}${reductionMeta?.reason ? ` - Alasan: ${reductionMeta.reason}` : ''}]`;
+
+      const newDeferredItem: ProcurementRequestItem = {
+        id: deferredItemId,
+        request_id: target.request_id,
+        item_type: target.item_type,
+        routine_item_id: target.routine_item_id,
+        custom_item_name: target.custom_item_name || itemName,
+        specification: target.specification,
+        quantity: reducedQuantity,
+        unit: target.unit,
+        priority_level: target.priority_level,
+        is_rollover: true,
+        origin_period_id: target.origin_period_id || activePeriod.id,
+        price_range_min: target.price_range_min,
+        price_range_max: target.price_range_max,
+        reference_link: target.reference_link,
+        final_unit_price: unitPrice,
+        estimated_total_price: reducedQuantity * unitPrice,
+        logistics_notes: target.logistics_notes
+          ? `${rolloverNote}`
+          : rolloverNote,
+        pm_item_approval: 'pending',
+        pm_item_approval_notes: rolloverNote,
+        pm_buy_approval: 'pending',
+        lifecycle_status: 'deferred_next_week',
+        delivery_status: 'none',
+        routine_item: target.routine_item,
+        department_id: target.department_id,
+        department_code: target.department_code,
+        department_name: target.department_name,
+        period_name: target.period_name || activePeriod.period_name,
+        created_at: new Date().toISOString(),
+      };
+
+      setAllRequestItems((prev) => [newDeferredItem, ...prev]);
+      setRequestItems((prev) => [newDeferredItem, ...prev]);
+
+      try {
+        await supabase.from('procurement_request_items').insert([
+          {
+            id: newDeferredItem.id,
+            request_id: newDeferredItem.request_id,
+            item_type: newDeferredItem.item_type,
+            routine_item_id:
+              newDeferredItem.item_type === 'routine'
+                ? newDeferredItem.routine_item_id || null
+                : null,
+            custom_item_name: newDeferredItem.custom_item_name || null,
+            specification: newDeferredItem.specification || null,
+            quantity: newDeferredItem.quantity,
+            unit: newDeferredItem.unit,
+            priority_level: newDeferredItem.priority_level,
+            is_rollover: true,
+            origin_period_id: newDeferredItem.origin_period_id,
+            price_range_min: newDeferredItem.price_range_min || null,
+            price_range_max: newDeferredItem.price_range_max || null,
+            reference_link: newDeferredItem.reference_link || null,
+            final_unit_price: newDeferredItem.final_unit_price || 0,
+            logistics_notes: rolloverNote,
+            pm_item_approval: 'pending',
+            pm_item_approval_notes: rolloverNote,
+            pm_buy_approval: 'pending',
+            lifecycle_status: 'deferred_next_week',
+            delivery_status: 'none',
+          },
+        ]);
+      } catch (insertErr) {
+        console.error('Supabase insert deferred_next_week item error:', insertErr);
+      }
+
+      const notif: AppNotification = {
+        id: `notif-rollover-${Date.now()}`,
+        department_id: target.department_id,
+        title: `Penundaan Otomatis Minggu Depan: ${itemName}`,
+        message: `HoD ${target.department_name || 'Departemen'} memilih menunda sisa ${reducedQuantity} ${target.unit} "${itemName}" ke minggu depan. Request otomatis sebesar ${reducedQuantity} ${target.unit} telah dibuat.`,
+        type: 'prioritize_confirmation',
+        related_item_id: newDeferredItem.id,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+    } else {
+      const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
+      const notif: AppNotification = {
+        id: `notif-reduce-accept-${Date.now()}`,
+        department_id: target.department_id,
+        title: `Pengurangan Kuantitas Diterima HoD: ${itemName}`,
+        message: `HoD ${target.department_name || 'Departemen'} memilih menerima pengurangan kuantitas "${itemName}" menjadi ${newQuantity} ${target.unit} tanpa penundaan ke minggu depan.`,
+        type: 'general',
+        related_item_id: itemId,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      setNotifications((prev) => [notif, ...prev]);
+    }
+
+    // Mark related reduction notification as read
+    setNotifications((prev) =>
+      prev.map((n) => (n.related_item_id === itemId ? { ...n, is_read: true } : n))
+    );
+
+    return { success: true };
   };
 
   const verifyProofByFinance = async (proofId: string, approved: boolean, notes?: string) => {
@@ -2102,6 +2718,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createAndSwitchPeriod,
         clearAllRequests,
         cancelItemPurchase,
+        acknowledgePriceChangeAlerts,
+        respondToItemReduction,
         markNotificationRead,
         markAllNotificationsRead,
       }}
