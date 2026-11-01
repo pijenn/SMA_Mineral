@@ -93,8 +93,9 @@ export default function PriceChangeAlertModal() {
   };
 
   const totalNetDiff = pendingAlerts.reduce((acc, { item, meta }) => {
-    const qty = item.quantity || meta.quantity || 1;
-    return acc + (meta.newUnitPrice - meta.oldUnitPrice) * qty;
+    const newQty = item.quantity || meta.quantity || 1;
+    const oldQty = meta.oldQuantity ?? newQty;
+    return acc + (meta.newUnitPrice * newQty - meta.oldUnitPrice * oldQty);
   }, 0);
 
   return (
@@ -109,17 +110,17 @@ export default function PriceChangeAlertModal() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/20 text-white">
-                  Notifikasi Perubahan Harga • {roleLabel}
+                  Notifikasi Penyesuaian Logistik • {roleLabel}
                 </span>
                 <span className="text-[11px] font-semibold text-amber-100">
-                  {pendingAlerts.length} Barang Mengalami Perubahan Harga
+                  {pendingAlerts.length} Barang Mengalami Penyesuaian
                 </span>
               </div>
               <h3 className="text-base font-bold mt-1">
-                Pemberitahuan Penyesuaian Harga Pembelian oleh Logistik
+                Pemberitahuan Penyesuaian Harga / Kuantitas oleh Logistik
               </h3>
               <p className="text-xs text-amber-100 mt-0.5">
-                Terdapat perubahan harga satuan aktual (lebih tinggi / lebih rendah) pada barang pengadaan yang telah disetujui / dibeli oleh Logistik.
+                Terdapat perubahan harga satuan atau kuantitas aktual (karena sisa stok / kondisi vendor) pada barang pengadaan yang telah disetujui / dibeli oleh Logistik.
               </p>
             </div>
           </div>
@@ -138,7 +139,7 @@ export default function PriceChangeAlertModal() {
           <div className="flex items-center gap-2 text-amber-900 font-medium">
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
-              Periksa selisih harga di bawah ini untuk memastikan kesesuaian anggaran & jurnal kas operasional.
+              Periksa selisih nilai di bawah ini untuk memastikan kesesuaian anggaran & jurnal kas operasional.
             </span>
           </div>
           <div className="font-bold text-slate-800 bg-white px-3 py-1 rounded-lg border border-amber-200">
@@ -164,15 +165,31 @@ export default function PriceChangeAlertModal() {
             const itemName =
               item.routine_item?.name || item.custom_item_name || 'Barang Pengadaan';
             const qty = item.quantity || meta.quantity || 1;
-            const oldTotal = meta.oldUnitPrice * qty;
+            const oldQty = meta.oldQuantity ?? qty;
+            const oldTotal = meta.oldUnitPrice * oldQty;
             const newTotal = meta.newUnitPrice * qty;
             const unitDiff = meta.newUnitPrice - meta.oldUnitPrice;
+            const qtyDiff = qty - oldQty;
+            const priceChanged = Math.abs(unitDiff) > 0.001;
+            const qtyChanged = Math.abs(qtyDiff) > 0.001;
             const totalDiff = newTotal - oldTotal;
-            const isHigher = unitDiff > 0;
+            const isHigher = totalDiff > 0 || (totalDiff === 0 && unitDiff > 0);
             const pctDiff =
-              meta.oldUnitPrice > 0
+              priceChanged && !qtyChanged && meta.oldUnitPrice > 0
                 ? Math.abs((unitDiff / meta.oldUnitPrice) * 100).toFixed(1)
+                : oldTotal > 0 && Math.abs(totalDiff) > 0.001
+                ? Math.abs((totalDiff / oldTotal) * 100).toFixed(1)
                 : null;
+            const badgeText =
+              priceChanged && qtyChanged
+                ? 'Harga & Qty Berubah'
+                : qtyChanged
+                ? qtyDiff > 0
+                  ? `Qty Naik (+${qtyDiff} ${item.unit})`
+                  : `Qty Turun (${qtyDiff} ${item.unit})`
+                : isHigher
+                ? 'Harga Naik'
+                : 'Harga Turun';
             const cleanLogNotes = cleanSystemNotes(item.logistics_notes);
 
             return (
@@ -187,7 +204,7 @@ export default function PriceChangeAlertModal() {
                       {itemName}
                     </span>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-200/80 text-slate-700">
-                      {qty} {item.unit}
+                      {qtyChanged ? `${oldQty} → ${qty} ${item.unit}` : `${qty} ${item.unit}`}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -202,20 +219,25 @@ export default function PriceChangeAlertModal() {
                 </div>
 
                 <div className="p-4 space-y-3">
-                  {/* Price Comparison Grid */}
+                  {/* Price & Quantity Comparison Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
                     <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                        Harga Awal Disetujui
+                        Awal Disetujui
                       </p>
-                      <p className="text-sm font-bold text-slate-700 mt-0.5 line-through decoration-slate-400">
+                      <p
+                        className={`text-sm font-bold text-slate-700 mt-0.5 ${
+                          priceChanged ? 'line-through decoration-slate-400' : ''
+                        }`}
+                      >
                         {formatCurrency(meta.oldUnitPrice)}{' '}
                         <span className="text-[11px] font-normal text-slate-500">
                           / {item.unit}
                         </span>
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Total: <span className="font-semibold">{formatCurrency(oldTotal)}</span>
+                        Qty: <span className="font-semibold">{oldQty} {item.unit}</span> • Total:{' '}
+                        <span className="font-semibold">{formatCurrency(oldTotal)}</span>
                       </p>
                     </div>
 
@@ -233,12 +255,12 @@ export default function PriceChangeAlertModal() {
                           <TrendingDown className="w-3.5 h-3.5" />
                         )}
                         <span>
-                          {isHigher ? 'Harga Naik' : 'Harga Turun'}
-                          {pctDiff ? ` (${isHigher ? '+' : '-'}${pctDiff}%)` : ''}
+                          {badgeText}
+                          {pctDiff && !qtyChanged ? ` (${isHigher ? '+' : '-'}${pctDiff}%)` : ''}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 mt-1">
-                        <span>Selisih:</span>
+                        <span>Selisih Total:</span>
                         <span className={isHigher ? 'text-rose-600' : 'text-emerald-600'}>
                           {isHigher ? '+' : ''}
                           {formatCurrency(totalDiff)}
@@ -254,7 +276,7 @@ export default function PriceChangeAlertModal() {
                       }`}
                     >
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                        Harga Aktual Logistik
+                        Aktual Logistik
                       </p>
                       <p
                         className={`text-sm font-bold mt-0.5 ${
@@ -267,7 +289,7 @@ export default function PriceChangeAlertModal() {
                         </span>
                       </p>
                       <p className="text-[11px] text-slate-700 mt-0.5">
-                        Total Baru:{' '}
+                        Qty: <span className="font-bold">{qty} {item.unit}</span> • Total:{' '}
                         <span className="font-bold">{formatCurrency(newTotal)}</span>
                       </p>
                     </div>

@@ -130,6 +130,7 @@ interface AppContextType {
     itemId: string,
     newUnitPrice: number,
     options?: {
+      quantity?: number;
       price_range_min?: number;
       price_range_max?: number;
       reference_link?: string;
@@ -150,6 +151,7 @@ interface AppContextType {
     },
     options?: {
       actualUnitPrice?: number;
+      actualQuantity?: number;
       priceChangeNotes?: string;
     }
   ) => Promise<void>;
@@ -1282,28 +1284,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Helper to push price change notifications to PM & Finance
+  // Helper to push price & quantity change notifications to PM, Finance (& HoD when quantity changes)
   const pushPriceChangeNotifications = async (
     item: ProcurementRequestItem,
     oldUnitPrice: number,
     newUnitPrice: number,
-    reason?: string
+    reason?: string,
+    qtyInfo?: { oldQuantity: number; newQuantity: number }
   ) => {
     const itemName = item.routine_item?.name || item.custom_item_name || 'Barang Pengadaan';
-    const qty = item.quantity || 1;
-    const oldTotal = oldUnitPrice * qty;
-    const newTotal = newUnitPrice * qty;
-    const isHigher = newUnitPrice > oldUnitPrice;
-    const diffDirection = isHigher ? 'NAIK (Lebih Tinggi)' : 'TURUN (Lebih Rendah)';
+    const oldQty = qtyInfo ? qtyInfo.oldQuantity : item.quantity || 1;
+    const newQty = qtyInfo ? qtyInfo.newQuantity : item.quantity || 1;
+    const priceChanged = Math.abs(newUnitPrice - oldUnitPrice) > 0.001;
+    const qtyChanged = Math.abs(newQty - oldQty) > 0.001;
+    const oldTotal = oldUnitPrice * oldQty;
+    const newTotal = newUnitPrice * newQty;
+    const isTotalHigher = newTotal > oldTotal || (newTotal === oldTotal && newUnitPrice > oldUnitPrice);
     const diffUnit = Math.abs(newUnitPrice - oldUnitPrice);
     const diffTotal = Math.abs(newTotal - oldTotal);
     const nowIso = new Date().toISOString();
 
+    let titlePrefix = '';
+    let messageBody = '';
+
+    if (priceChanged && qtyChanged) {
+      titlePrefix = `Penyesuaian Harga & Kuantitas Logistik: ${itemName}`;
+      messageBody = `Logistik menyesuaikan "${itemName}" (${item.department_name || 'Departemen'}): Kuantitas dari ${oldQty} menjadi ${newQty} ${item.unit}, dan Harga satuan dari ${formatCurrency(oldUnitPrice)} menjadi ${formatCurrency(newUnitPrice)} (Total ${isTotalHigher ? '+' : '-'}${formatCurrency(diffTotal)} menjadi ${formatCurrency(newTotal)}).`;
+    } else if (qtyChanged) {
+      const qtyDir = newQty > oldQty ? 'BERTAMBAH' : 'BERKURANG';
+      titlePrefix = `Penyesuaian Kuantitas Logistik (${qtyDir}): ${itemName}`;
+      messageBody = `Kuantitas "${itemName}" (${item.department_name || 'Departemen'}) disesuaikan oleh Logistik dari ${oldQty} menjadi ${newQty} ${item.unit} pada harga ${formatCurrency(newUnitPrice)}/${item.unit} (Total ${isTotalHigher ? '+' : '-'}${formatCurrency(diffTotal)} menjadi ${formatCurrency(newTotal)}).`;
+    } else {
+      const diffDirection = newUnitPrice > oldUnitPrice ? 'NAIK (Lebih Tinggi)' : 'TURUN (Lebih Rendah)';
+      titlePrefix = `Perubahan Harga Pembelian (${diffDirection}): ${itemName}`;
+      messageBody = `Harga satuan "${itemName}" (${newQty} ${item.unit} - ${item.department_name || 'Departemen'}) berubah dari ${formatCurrency(oldUnitPrice)} menjadi ${formatCurrency(newUnitPrice)} (${newUnitPrice > oldUnitPrice ? '+' : '-'}${formatCurrency(diffUnit)}/unit | Total ${isTotalHigher ? '+' : '-'}${formatCurrency(diffTotal)}).`;
+    }
+
+    if (reason?.trim()) {
+      messageBody += ` Catatan Logistik: "${reason.trim()}"`;
+    }
+
     const pmUsers = users.filter((u) => u.role === 'project_manager');
     const financeUsers = users.filter((u) => u.role === 'admin_finance');
+    const hodUsers = qtyChanged
+      ? users.filter((u) => u.department_id === item.department_id && u.role === 'hod')
+      : [];
+
     const recipients = [
       ...(pmUsers.length > 0 ? pmUsers : [{ id: undefined, role: 'project_manager' as UserRole }]),
       ...(financeUsers.length > 0 ? financeUsers : [{ id: undefined, role: 'admin_finance' as UserRole }]),
+      ...hodUsers,
     ];
 
     const createdNotifs: AppNotification[] = recipients.map((rec, idx) => ({
@@ -1313,8 +1343,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : `notif-price-${Date.now()}-${idx}`,
       recipient_id: rec.id,
       department_id: item.department_id,
-      title: `Perubahan Harga Pembelian (${diffDirection}): ${itemName}`,
-      message: `Harga satuan "${itemName}" (${qty} ${item.unit} - ${item.department_name || 'Departemen'}) berubah dari ${formatCurrency(oldUnitPrice)} menjadi ${formatCurrency(newUnitPrice)} (${isHigher ? '+' : '-'}${formatCurrency(diffUnit)}/unit | Total ${isHigher ? '+' : '-'}${formatCurrency(diffTotal)}).${reason?.trim() ? ` Catatan Logistik: "${reason.trim()}"` : ''}`,
+      title: titlePrefix,
+      message: messageBody,
       type: 'purchase_update',
       related_item_id: item.id,
       is_read: false,
@@ -1555,6 +1585,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     itemId: string,
     newUnitPrice: number,
     options?: {
+      quantity?: number;
       price_range_min?: number;
       price_range_max?: number;
       reference_link?: string;
@@ -1570,8 +1601,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: 'Harga satuan tidak boleh bernilai negatif.' };
     }
 
+    if (options?.quantity !== undefined && (isNaN(options.quantity) || options.quantity <= 0)) {
+      return { success: false, error: 'Kuantitas barang harus lebih dari 0.' };
+    }
+
     const oldUnitPrice = target.final_unit_price || 0;
+    const oldQuantity = target.quantity || 1;
+    const newQuantity = options?.quantity !== undefined ? Number(options.quantity) : oldQuantity;
+
     const priceChanged = Math.abs(newUnitPrice - oldUnitPrice) > 0.001;
+    const quantityChanged = Math.abs(newQuantity - oldQuantity) > 0.001;
+
     const wasApprovedOrPurchased =
       oldUnitPrice > 0 ||
       target.pm_item_approval === 'approved' ||
@@ -1585,17 +1625,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         'received_at_site',
       ].includes(target.lifecycle_status);
 
-    const newEstimatedTotal = (target.quantity || 1) * newUnitPrice;
+    const newEstimatedTotal = newQuantity * newUnitPrice;
     const isHigher = newUnitPrice > oldUnitPrice;
     const diffLabel =
       oldUnitPrice > 0 && priceChanged
         ? ` (${isHigher ? 'Naik' : 'Turun'} dari ${formatCurrency(oldUnitPrice)}/unit)`
         : '';
-    const noteText = options?.notes?.trim()
-      ? `[Logistik penyesuaian harga: ${formatCurrency(newUnitPrice)}/unit${diffLabel}. Catatan: ${options.notes.trim()}]`
-      : priceChanged && oldUnitPrice > 0
-      ? `[Logistik penyesuaian harga: ${formatCurrency(oldUnitPrice)} -> ${formatCurrency(newUnitPrice)}/unit]`
-      : undefined;
+
+    let noteText: string | undefined;
+    const cleanNote = options?.notes?.trim();
+
+    if (priceChanged && quantityChanged) {
+      noteText = `[Logistik penyesuaian harga & qty: Qty ${oldQuantity} -> ${newQuantity} ${target.unit}, Harga ${formatCurrency(oldUnitPrice)} -> ${formatCurrency(newUnitPrice)}/unit${cleanNote ? `. Catatan: ${cleanNote}` : ''}]`;
+    } else if (quantityChanged) {
+      noteText = `[Logistik penyesuaian qty: ${oldQuantity} -> ${newQuantity} ${target.unit}${cleanNote ? `. Catatan: ${cleanNote}` : ''}]`;
+    } else if (cleanNote) {
+      noteText = `[Logistik penyesuaian harga: ${formatCurrency(newUnitPrice)}/unit${diffLabel}. Catatan: ${cleanNote}]`;
+    } else if (priceChanged && oldUnitPrice > 0) {
+      noteText = `[Logistik penyesuaian harga: ${formatCurrency(oldUnitPrice)} -> ${formatCurrency(newUnitPrice)}/unit]`;
+    }
 
     let updatedLogisticsNotes = noteText
       ? target.logistics_notes
@@ -1603,22 +1651,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : noteText
       : target.logistics_notes;
 
-    // Embed PRICE_ALERT metadata for PM & Finance login pop-up whenever price changes on a priced/approved/purchased item
-    if (priceChanged && wasApprovedOrPurchased) {
+    // Preserve unacknowledged baseline if Logistik makes consecutive adjustments before PM/Finance acknowledge
+    const existingAlert = parsePriceAlertFromNotes(target.id, target.logistics_notes);
+    const hasUnackBaseline = existingAlert && (!existingAlert.pmAck || !existingAlert.finAck);
+    const baselineUnitPrice = hasUnackBaseline ? existingAlert.oldUnitPrice : oldUnitPrice;
+    const baselineQuantity = hasUnackBaseline ? (existingAlert.oldQuantity ?? existingAlert.quantity) : oldQuantity;
+
+    // Embed PRICE_ALERT metadata for PM & Finance login pop-up whenever price or quantity changes on a priced/approved/purchased item
+    if ((priceChanged || quantityChanged) && wasApprovedOrPurchased) {
+      const defaultReason =
+        priceChanged && quantityChanged
+          ? 'Penyesuaian harga & kuantitas stok aktual oleh Logistik'
+          : quantityChanged
+          ? 'Penyesuaian kuantitas karena perubahan sisa stok saat eksekusi Logistik'
+          : 'Penyesuaian harga aktual pembelian oleh Logistik';
+
       updatedLogisticsNotes = upsertPriceAlertInNotes(target.logistics_notes, noteText, {
         alertId: `pa-${target.id}-${Date.now()}`,
         itemId: target.id,
-        oldUnitPrice,
+        oldUnitPrice: baselineUnitPrice,
         newUnitPrice,
-        quantity: target.quantity || 1,
+        oldQuantity: baselineQuantity,
+        quantity: newQuantity,
         pmAck: false,
         finAck: false,
-        reason: options?.notes?.trim() || 'Penyesuaian harga aktual pembelian oleh Logistik',
+        reason: cleanNote || defaultReason,
         timestamp: Date.now(),
       });
     }
 
     const mergedUpdates: Partial<ProcurementRequestItem> = {
+      quantity: newQuantity,
       final_unit_price: newUnitPrice,
       estimated_total_price: newEstimatedTotal,
       logistics_notes: updatedLogisticsNotes,
@@ -1634,7 +1697,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       mergedUpdates.reference_link = options.reference_link;
     }
 
-    // If item was draft or submitted, auto-transition to validated when price is adjusted
+    // If item was draft or submitted, auto-transition to validated when price/qty is adjusted
     if (target.lifecycle_status === 'draft' || target.lifecycle_status === 'submitted') {
       mergedUpdates.lifecycle_status = 'validated';
     }
@@ -1658,13 +1721,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // If item was already purchased, also sync the associated transaction total_amount & journal entries
     if (
-      priceChanged &&
+      (priceChanged || quantityChanged) &&
       ['purchased', 'processing_delivery', 'in_transit', 'received_at_site'].includes(
         target.lifecycle_status
       )
     ) {
       const itemName = target.routine_item?.name || target.custom_item_name || '';
-      const oldCost = (target.quantity || 1) * oldUnitPrice;
+      const oldCost = oldQuantity * oldUnitPrice;
       const associatedTx = allTransactions.find((tx) => {
         const matchesPeriod = tx.period_id === (target.origin_period_id || activePeriod.id);
         const matchesNotes =
@@ -1701,15 +1764,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    if (priceChanged && wasApprovedOrPurchased) {
-      await pushPriceChangeNotifications(target, oldUnitPrice, newUnitPrice, options?.notes);
+    if ((priceChanged || quantityChanged) && wasApprovedOrPurchased) {
+      await pushPriceChangeNotifications(
+        target,
+        oldUnitPrice,
+        newUnitPrice,
+        options?.notes,
+        { oldQuantity, newQuantity }
+      );
     } else {
       const itemName = target.routine_item?.name || target.custom_item_name || 'Barang Pengadaan';
       const notif: AppNotification = {
         id: `notif-${Date.now()}`,
         department_id: target.department_id,
-        title: 'Penyesuaian Harga oleh Logistik',
-        message: `Admin Logistik telah menyesuaikan harga ${itemName} (${target.department_name || 'Departemen'}) menjadi ${formatCurrency(newUnitPrice)} / ${target.unit}.${options?.notes?.trim() ? ` Catatan: "${options.notes.trim()}"` : ''}`,
+        title: quantityChanged
+          ? 'Penyesuaian Harga & Kuantitas oleh Logistik'
+          : 'Penyesuaian Harga oleh Logistik',
+        message: quantityChanged
+          ? `Admin Logistik telah menyesuaikan ${itemName} (${target.department_name || 'Departemen'}): Kuantitas menjadi ${newQuantity} ${target.unit} dan harga satuan ${formatCurrency(newUnitPrice)} / ${target.unit}.${cleanNote ? ` Catatan: "${cleanNote}"` : ''}`
+          : `Admin Logistik telah menyesuaikan harga ${itemName} (${target.department_name || 'Departemen'}) menjadi ${formatCurrency(newUnitPrice)} / ${target.unit}.${cleanNote ? ` Catatan: "${cleanNote}"` : ''}`,
         type: 'general',
         related_item_id: itemId,
         is_read: false,
@@ -1831,6 +1904,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     options?: {
       actualUnitPrice?: number;
+      actualQuantity?: number;
       priceChangeNotes?: string;
     }
   ) => {
@@ -1866,12 +1940,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       item: ProcurementRequestItem;
       oldUnitPrice: number;
       newUnitPrice: number;
+      oldQuantity: number;
+      newQuantity: number;
       updatedLogisticsNotes: string;
     }> = [];
 
     const itemUpdatesById: Record<
       string,
       {
+        quantity?: number;
         final_unit_price?: number;
         estimated_total_price?: number;
         logistics_notes?: string;
@@ -1882,38 +1959,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const target = requestItems.find((i) => i.id === id);
       if (!target) continue;
       const oldUnitPrice = target.final_unit_price || 0;
+      const oldQuantity = target.quantity || 1;
+
       const hasActualPriceOverride =
         options?.actualUnitPrice !== undefined &&
         options.actualUnitPrice >= 0 &&
         Math.abs(options.actualUnitPrice - oldUnitPrice) > 0.001;
 
-      if (hasActualPriceOverride && options?.actualUnitPrice !== undefined) {
-        const newUnitPrice = options.actualUnitPrice;
+      const hasActualQuantityOverride =
+        options?.actualQuantity !== undefined &&
+        options.actualQuantity > 0 &&
+        Math.abs(options.actualQuantity - oldQuantity) > 0.001;
+
+      if (hasActualPriceOverride || hasActualQuantityOverride) {
+        const newUnitPrice =
+          hasActualPriceOverride && options?.actualUnitPrice !== undefined
+            ? options.actualUnitPrice
+            : oldUnitPrice;
+        const newQuantity =
+          hasActualQuantityOverride && options?.actualQuantity !== undefined
+            ? options.actualQuantity
+            : oldQuantity;
+
         const isHigher = newUnitPrice > oldUnitPrice;
-        const noteText = `[Harga aktual pembelian PO ${txData.transaction_code}: ${formatCurrency(newUnitPrice)}/unit (${isHigher ? 'Naik' : 'Turun'} dari ${formatCurrency(oldUnitPrice)}/unit)${options.priceChangeNotes?.trim() ? ` - Catatan: ${options.priceChangeNotes.trim()}` : ''}]`;
+        let noteText = '';
+        if (hasActualPriceOverride && hasActualQuantityOverride) {
+          noteText = `[Penyesuaian aktual PO ${txData.transaction_code}: Qty ${oldQuantity} -> ${newQuantity} ${target.unit}, Harga ${formatCurrency(oldUnitPrice)} -> ${formatCurrency(newUnitPrice)}/unit${options?.priceChangeNotes?.trim() ? ` - Catatan: ${options.priceChangeNotes.trim()}` : ''}]`;
+        } else if (hasActualQuantityOverride) {
+          noteText = `[Kuantitas aktual pembelian PO ${txData.transaction_code}: ${oldQuantity} -> ${newQuantity} ${target.unit}${options?.priceChangeNotes?.trim() ? ` - Catatan: ${options.priceChangeNotes.trim()}` : ''}]`;
+        } else {
+          noteText = `[Harga aktual pembelian PO ${txData.transaction_code}: ${formatCurrency(newUnitPrice)}/unit (${isHigher ? 'Naik' : 'Turun'} dari ${formatCurrency(oldUnitPrice)}/unit)${options?.priceChangeNotes?.trim() ? ` - Catatan: ${options.priceChangeNotes.trim()}` : ''}]`;
+        }
+
+        const existingAlert = parsePriceAlertFromNotes(target.id, target.logistics_notes);
+        const hasUnackBaseline = existingAlert && (!existingAlert.pmAck || !existingAlert.finAck);
+        const baselineUnitPrice = hasUnackBaseline ? existingAlert.oldUnitPrice : oldUnitPrice;
+        const baselineQuantity = hasUnackBaseline ? (existingAlert.oldQuantity ?? existingAlert.quantity) : oldQuantity;
+
         const notesWithAlert = upsertPriceAlertInNotes(target.logistics_notes, noteText, {
           alertId: `pa-${target.id}-${Date.now()}`,
           itemId: target.id,
-          oldUnitPrice,
+          oldUnitPrice: baselineUnitPrice,
           newUnitPrice,
-          quantity: target.quantity || 1,
+          oldQuantity: baselineQuantity,
+          quantity: newQuantity,
           pmAck: false,
           finAck: false,
           reason:
-            options.priceChangeNotes?.trim() ||
-            `Perubahan harga saat eksekusi PO ${txData.transaction_code} (${txData.vendor_name})`,
+            options?.priceChangeNotes?.trim() ||
+            `Penyesuaian aktual saat eksekusi PO ${txData.transaction_code} (${txData.vendor_name})`,
           timestamp: Date.now(),
         });
 
         itemUpdatesById[id] = {
+          quantity: newQuantity,
           final_unit_price: newUnitPrice,
-          estimated_total_price: (target.quantity || 1) * newUnitPrice,
+          estimated_total_price: newQuantity * newUnitPrice,
           logistics_notes: notesWithAlert,
         };
         priceChangedItems.push({
           item: target,
           oldUnitPrice,
           newUnitPrice,
+          oldQuantity,
+          newQuantity,
           updatedLogisticsNotes: notesWithAlert,
         });
       }
@@ -2000,6 +2109,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             delivery_status: 'processing',
             ...(extra
               ? {
+                  ...(extra.quantity !== undefined ? { quantity: extra.quantity } : {}),
                   final_unit_price: extra.final_unit_price,
                   logistics_notes: extra.logistics_notes,
                 }
@@ -2017,7 +2127,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         changed.item,
         changed.oldUnitPrice,
         changed.newUnitPrice,
-        options?.priceChangeNotes || `Eksekusi PO ${txData.transaction_code}`
+        options?.priceChangeNotes || `Eksekusi PO ${txData.transaction_code}`,
+        { oldQuantity: changed.oldQuantity, newQuantity: changed.newQuantity }
       );
     }
   };

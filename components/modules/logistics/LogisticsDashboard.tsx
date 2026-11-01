@@ -94,9 +94,10 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [refLink, setRefLink] = useState('');
   const [finalPrice, setFinalPrice] = useState<number>(0);
 
-  // Dedicated Adjust Price Modal state (Admin Logistik authority for every item)
+  // Dedicated Adjust Price & Quantity Modal state (Admin Logistik authority for every item)
   const [adjustPriceModalItem, setAdjustPriceModalItem] = useState<ProcurementRequestItem | null>(null);
   const [newAdjustPrice, setNewAdjustPrice] = useState<number>(0);
+  const [newAdjustQuantity, setNewAdjustQuantity] = useState<number>(1);
   const [adjustPriceRangeMin, setAdjustPriceRangeMin] = useState<number>(0);
   const [adjustPriceRangeMax, setAdjustPriceRangeMax] = useState<number>(0);
   const [adjustPriceRefLink, setAdjustPriceRefLink] = useState<string>('');
@@ -110,6 +111,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer (Mandiri)');
   const [purchaseActualUnitPrice, setPurchaseActualUnitPrice] = useState<number>(0);
+  const [purchaseActualQuantity, setPurchaseActualQuantity] = useState<number>(1);
   const [purchasePriceChangeNotes, setPurchasePriceChangeNotes] = useState<string>('');
   const [receiptUrl, setReceiptUrl] = useState('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
   const [receiptFileName, setReceiptFileName] = useState('');
@@ -221,6 +223,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     const defaultPrice = item.final_unit_price || routine?.estimated_unit_price || 0;
     setAdjustPriceModalItem(item);
     setNewAdjustPrice(defaultPrice);
+    setNewAdjustQuantity(item.quantity || 1);
     setAdjustPriceRangeMin(item.price_range_min || (defaultPrice ? defaultPrice * 0.95 : 0));
     setAdjustPriceRangeMax(item.price_range_max || (defaultPrice ? defaultPrice * 1.1 : 0));
     setAdjustPriceRefLink(item.reference_link || '');
@@ -231,6 +234,15 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
   const handleSaveAdjustPrice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adjustPriceModalItem) return;
+
+    const numQty = Number(newAdjustQuantity);
+    if (isNaN(numQty) || numQty <= 0) {
+      setAdjustPriceFeedback({
+        type: 'error',
+        message: 'Kuantitas barang harus lebih dari 0.',
+      });
+      return;
+    }
 
     if (newAdjustPrice < 0) {
       setAdjustPriceFeedback({
@@ -244,6 +256,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     setAdjustPriceFeedback(null);
 
     const res = await adjustItemPrice(adjustPriceModalItem.id, Number(newAdjustPrice), {
+      quantity: numQty,
       price_range_min: Number(adjustPriceRangeMin),
       price_range_max: Number(adjustPriceRangeMax),
       reference_link: adjustPriceRefLink,
@@ -253,9 +266,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     setIsSavingAdjustPrice(false);
 
     if (res.success) {
+      const qtyChanged = Math.abs(numQty - (adjustPriceModalItem.quantity || 1)) > 0.001;
       setAdjustPriceFeedback({
         type: 'success',
-        message: `Harga satuan berhasil diperbarui menjadi ${formatCurrency(newAdjustPrice)}.`,
+        message: qtyChanged
+          ? `Harga & kuantitas berhasil diperbarui (${numQty} ${adjustPriceModalItem.unit} @ ${formatCurrency(newAdjustPrice)}).`
+          : `Harga satuan berhasil diperbarui menjadi ${formatCurrency(newAdjustPrice)} (${numQty} ${adjustPriceModalItem.unit}).`,
       });
 
       if (selectedDetailItem && selectedDetailItem.id === adjustPriceModalItem.id) {
@@ -263,7 +279,9 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
           prev
             ? {
                 ...prev,
+                quantity: numQty,
                 final_unit_price: Number(newAdjustPrice),
+                estimated_total_price: numQty * Number(newAdjustPrice),
                 price_range_min: Number(adjustPriceRangeMin),
                 price_range_max: Number(adjustPriceRangeMax),
                 reference_link: adjustPriceRefLink,
@@ -279,7 +297,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     } else {
       setAdjustPriceFeedback({
         type: 'error',
-        message: res.error || 'Gagal menyimpan penyesuaian harga.',
+        message: res.error || 'Gagal menyimpan penyesuaian harga & kuantitas.',
       });
     }
   };
@@ -293,6 +311,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     const invNum = `INV-${Date.now().toString().slice(-4)}`;
     setInvoiceNumber(invNum);
     setPurchaseActualUnitPrice(item.final_unit_price || 0);
+    setPurchaseActualQuantity(item.quantity || 1);
     setPurchasePriceChangeNotes('');
     setReceiptUrl('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
     setReceiptFileName(`Kuitansi_${invNum}.jpg`);
@@ -321,9 +340,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
     if (!purchaseModalItem) return;
 
     const approvedUnitPrice = purchaseModalItem.final_unit_price || 0;
+    const approvedQty = purchaseModalItem.quantity || 1;
     const effectiveUnitPrice =
       purchaseActualUnitPrice >= 0 ? Number(purchaseActualUnitPrice) : approvedUnitPrice;
-    const total = purchaseModalItem.quantity * effectiveUnitPrice;
+    const effectiveQuantity =
+      Number(purchaseActualQuantity) > 0 ? Number(purchaseActualQuantity) : approvedQty;
+    const total = effectiveQuantity * effectiveUnitPrice;
 
     recordPurchase(
       {
@@ -334,7 +356,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         purchase_date: new Date().toISOString().split('T')[0],
         total_amount: total,
         payment_method: paymentMethod,
-        notes: `Pembelian operasional ${purchaseModalItem.quantity} ${purchaseModalItem.unit} untuk Dept ${purchaseModalItem.department_name}`,
+        notes: `Pembelian operasional ${effectiveQuantity} ${purchaseModalItem.unit} untuk Dept ${purchaseModalItem.department_name}`,
       },
       [purchaseModalItem.id],
       receiptUrl
@@ -346,6 +368,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         : undefined,
       {
         actualUnitPrice: effectiveUnitPrice,
+        actualQuantity: effectiveQuantity,
         priceChangeNotes: purchasePriceChangeNotes,
       }
     );
@@ -645,13 +668,21 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     )}
 
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-4 gap-y-1">
-                      <span className="flex items-center gap-1.5">
+                      <span className="flex items-center gap-1.5 flex-wrap">
                         Jumlah: <strong className="text-zinc-800 dark:text-zinc-200">{item.quantity} {item.unit}</strong>
                         {item.pm_item_approval_notes && item.pm_item_approval_notes.includes('[Finance:') && (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                             Disesuaikan Finance
                           </span>
                         )}
+                        {item.logistics_notes &&
+                          (item.logistics_notes.includes('qty:') ||
+                            item.logistics_notes.includes('Kuantitas aktual') ||
+                            item.logistics_notes.includes('Qty ')) && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              Qty Disesuaikan Logistik
+                            </span>
+                          )}
                       </span>
                       <span>
                         Harga Satuan Sourcing:{' '}
@@ -666,6 +697,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                         </strong>
                       </span>
                     </div>
+
+                    {cleanSystemNotes(item.logistics_notes) && (
+                      <div className="text-[11px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg inline-block mt-1">
+                        <strong>Catatan Logistik:</strong> {cleanSystemNotes(item.logistics_notes)}
+                      </div>
+                    )}
 
                     {item.reference_link && (
                       <div className="pt-1">
@@ -701,14 +738,14 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                       <span>Detail</span>
                     </button>
 
-                    {/* Sesuaikan Harga Button (Every item) */}
+                    {/* Sesuaikan Harga & Kuantitas Button (Every item) */}
                     <button
                       onClick={() => handleOpenAdjustPrice(item)}
                       className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
-                      title="Sesuaikan harga satuan untuk barang ini"
+                      title="Sesuaikan harga satuan dan kuantitas barang ini"
                     >
                       <Coins className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Sesuaikan Harga</span>
+                      <span>Sesuaikan Harga &amp; Kuantitas</span>
                     </button>
 
                     {/* Sourcing Input Button */}
@@ -860,222 +897,292 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
       )}
 
       {/* Purchase Modal */}
-      {purchaseModalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
-          <div className="w-full max-w-lg bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-[#232830] pb-3">
-              <h3 className="font-bold text-base text-zinc-900 dark:text-white">
-                Eksekusi Pembelian (Purchase Order)
-              </h3>
-              <button
-                onClick={() => setPurchaseModalItem(null)}
-                className="text-zinc-400 hover:text-zinc-200 text-sm font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
+      {purchaseModalItem && (() => {
+        const approvedPrice = purchaseModalItem.final_unit_price || 0;
+        const approvedQty = purchaseModalItem.quantity || 1;
+        const effectivePrice =
+          Number(purchaseActualUnitPrice) >= 0 ? Number(purchaseActualUnitPrice) : approvedPrice;
+        const effectiveQty =
+          Number(purchaseActualQuantity) > 0 ? Number(purchaseActualQuantity) : approvedQty;
+        const priceChangedInPo = Math.abs(effectivePrice - approvedPrice) > 0.001;
+        const qtyChangedInPo = Math.abs(effectiveQty - approvedQty) > 0.001;
+        const actualPoTotal = effectiveQty * effectivePrice;
 
-            <form onSubmit={handleExecutePurchase} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Nama Vendor / Supplier
-                </label>
-                <input
-                  type="text"
-                  value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Nomor Invoice / Kuitansi Fisik
-                </label>
-                <input
-                  type="text"
-                  value={invoiceNumber}
-                  onChange={(e) => setInvoiceNumber(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white font-mono focus:outline-none focus:border-emerald-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Metode Pembayaran
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+            <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-[#232830] pb-3">
+                <h3 className="font-bold text-base text-zinc-900 dark:text-white">
+                  Eksekusi Pembelian (Purchase Order)
+                </h3>
+                <button
+                  onClick={() => setPurchaseModalItem(null)}
+                  className="text-zinc-400 hover:text-zinc-200 text-sm font-bold cursor-pointer"
                 >
-                  <option value="Bank Transfer (Mandiri)">Bank Transfer (Mandiri PT SMA)</option>
-                  <option value="Petty Cash Site">Petty Cash Kas Lapangan</option>
-                  <option value="Corporate Credit Card">Corporate Card</option>
-                </select>
+                  ✕
+                </button>
               </div>
 
-              {/* Actual Purchase Unit Price & Automatic Notification to PM & Finance if Changed */}
-              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-zinc-700 dark:text-zinc-300">
-                    Harga Satuan Aktual Pembelian (IDR / {purchaseModalItem.unit})
-                  </span>
-                  <span className="text-[11px] text-zinc-500 font-mono">
-                    Disetujui: {formatCurrency(purchaseModalItem.final_unit_price || 0)}
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  value={purchaseActualUnitPrice}
-                  onChange={(e) => setPurchaseActualUnitPrice(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
-                  required
-                />
-                {Math.abs(
-                  Number(purchaseActualUnitPrice) - (purchaseModalItem.final_unit_price || 0)
-                ) > 0.001 && (
-                  <div className="space-y-2 pt-1">
-                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-                      <div>
-                        <strong>Perubahan Harga Terdeteksi:</strong> Harga aktual{' '}
-                        {Number(purchaseActualUnitPrice) > (purchaseModalItem.final_unit_price || 0)
-                          ? 'LEBIH TINGGI'
-                          : 'LEBIH RENDAH'}{' '}
-                        dari harga yang disetujui PM & Finance. Pop-up notifikasi otomatis akan ditampilkan kepada <strong>PM</strong> dan <strong>Finance</strong> saat login.
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Catatan Perubahan Harga untuk PM & Finance (Opsional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Contoh: Kenaikan harga pasar vendor / diskon pembelian tunai..."
-                        value={purchasePriceChangeNotes}
-                        onChange={(e) => setPurchasePriceChangeNotes(e.target.value)}
-                        className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                    Bukti Kuitansi / Faktur Pembelian:
+              <form onSubmit={handleExecutePurchase} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Nama Vendor / Supplier
                   </label>
-                  <div className="flex items-center gap-1 text-[11px] font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setReceiptUploadMode('file')}
-                      className={`px-2 py-0.5 rounded cursor-pointer ${
-                        receiptUploadMode === 'file'
-                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      Unggah File
-                    </button>
-                    <span className="text-zinc-400">|</span>
-                    <button
-                      type="button"
-                      onClick={() => setReceiptUploadMode('url')}
-                      className={`px-2 py-0.5 rounded cursor-pointer ${
-                        receiptUploadMode === 'url'
-                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      URL Gambar
-                    </button>
-                  </div>
-                </div>
-
-                {receiptUploadMode === 'file' ? (
-                  <div className="space-y-2">
-                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-300 dark:border-[#2a323e] hover:border-emerald-500 rounded-xl p-4 cursor-pointer bg-zinc-50 dark:bg-[#0e1115] transition-colors">
-                      <Upload className="w-6 h-6 text-zinc-400 mb-1" />
-                      <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                        {receiptFileName ? receiptFileName : 'Pilih file kuitansi (JPG, PNG, PDF)'}
-                      </span>
-                      <span className="text-[10px] text-zinc-400 mt-0.5">
-                        Klik untuk memilih dokumen invoice dari komputer
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-                ) : (
                   <input
-                    type="url"
-                    placeholder="https://..."
-                    value={receiptUrl}
-                    onChange={(e) => setReceiptUrl(e.target.value)}
+                    type="text"
+                    value={vendorName}
+                    onChange={(e) => setVendorName(e.target.value)}
                     className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
                     required
                   />
-                )}
+                </div>
 
-                {/* Proof Preview */}
-                {receiptUrl && (
-                  <div className="p-2 rounded-xl bg-zinc-100 dark:bg-[#181c22] border border-zinc-200 dark:border-[#262c36] flex items-center gap-3">
-                    {receiptUrl.startsWith('data:application/pdf') ? (
-                      <div className="w-12 h-12 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shrink-0">
-                        <FileText className="w-6 h-6" />
-                      </div>
-                    ) : (
-                      <img
-                        src={receiptUrl}
-                        alt="Preview Kuitansi"
-                        className="w-12 h-12 rounded-lg object-cover border border-zinc-300 dark:border-[#2a323e] shrink-0"
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Nomor Invoice / Kuitansi Fisik
+                  </label>
+                  <input
+                    type="text"
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white font-mono focus:outline-none focus:border-emerald-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Metode Pembayaran
+                  </label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="Bank Transfer (Mandiri)">Bank Transfer (Mandiri PT SMA)</option>
+                    <option value="Petty Cash Site">Petty Cash Kas Lapangan</option>
+                    <option value="Corporate Credit Card">Corporate Card</option>
+                  </select>
+                </div>
+
+                {/* Actual Purchase Quantity & Unit Price with Automatic Notification to PM & Finance if Changed */}
+                <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-3">
+                  {/* Actual Quantity */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-zinc-700 dark:text-zinc-300">
+                        Kuantitas Aktual Pembelian ({purchaseModalItem.unit})
+                      </span>
+                      <span className="text-[11px] text-zinc-500 font-mono">
+                        Disetujui: {approvedQty} {purchaseModalItem.unit}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPurchaseActualQuantity((prev) => Math.max(1, (Number(prev) || 1) - 1))
+                        }
+                        disabled={Number(purchaseActualQuantity) <= 1}
+                        className="px-3 py-2 rounded-xl bg-white dark:bg-[#14171c] hover:bg-zinc-100 dark:hover:bg-[#1e232b] border border-zinc-200 dark:border-[#232830] text-zinc-700 dark:text-zinc-300 font-bold text-xs disabled:opacity-40 cursor-pointer transition-colors"
+                      >
+                        &minus;1
+                      </button>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step="any"
+                        value={purchaseActualQuantity}
+                        onChange={(e) => setPurchaseActualQuantity(Number(e.target.value))}
+                        className="flex-1 px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-center text-zinc-900 dark:text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
+                        required
                       />
-                    )}
-                    <div className="text-xs overflow-hidden flex-1">
-                      <div className="font-bold text-zinc-800 dark:text-zinc-200 truncate">
-                        {receiptFileName || 'Bukti Kuitansi / Faktur PO'}
-                      </div>
-                      <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>Siap dikirimkan ke antrean verifikasi Admin Finance</span>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPurchaseActualQuantity((prev) => (Number(prev) || 0) + 1)
+                        }
+                        className="px-3 py-2 rounded-xl bg-white dark:bg-[#14171c] hover:bg-zinc-100 dark:hover:bg-[#1e232b] border border-zinc-200 dark:border-[#232830] text-zinc-700 dark:text-zinc-300 font-bold text-xs cursor-pointer transition-colors"
+                      >
+                        +1
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
 
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-700 dark:text-emerald-400">
-                Total Biaya Aktual: <strong>{formatCurrency(purchaseModalItem.quantity * (Number(purchaseActualUnitPrice) >= 0 ? Number(purchaseActualUnitPrice) : (purchaseModalItem.final_unit_price || 0)))}</strong> akan memotong kuota kas mingguan dan masuk ke queue verifikasi Finance.
-              </div>
+                  {/* Actual Unit Price */}
+                  <div className="space-y-1.5 pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-zinc-700 dark:text-zinc-300">
+                        Harga Satuan Aktual Pembelian (IDR / {purchaseModalItem.unit})
+                      </span>
+                      <span className="text-[11px] text-zinc-500 font-mono">
+                        Disetujui: {formatCurrency(approvedPrice)}
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={purchaseActualUnitPrice}
+                      onChange={(e) => setPurchaseActualUnitPrice(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
-                <button
-                  type="button"
-                  onClick={() => setPurchaseModalItem(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-800 dark:hover:text-white"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold cursor-pointer"
-                >
-                  Konfirmasi Pembelian
-                </button>
-              </div>
-            </form>
+                  {(priceChangedInPo || qtyChangedInPo) && (
+                    <div className="space-y-2 pt-1">
+                      <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                        <div>
+                          <strong>
+                            Perubahan {priceChangedInPo && qtyChangedInPo ? 'Harga & Kuantitas' : qtyChangedInPo ? 'Kuantitas' : 'Harga'} Terdeteksi:
+                          </strong>{' '}
+                          {qtyChangedInPo && (
+                            <>
+                              Kuantitas aktual disesuaikan dari <strong>{approvedQty}</strong> menjadi{' '}
+                              <strong>{effectiveQty} {purchaseModalItem.unit}</strong>
+                              {priceChangedInPo ? ', serta ' : '. '}
+                            </>
+                          )}
+                          {priceChangedInPo && (
+                            <>
+                              Harga aktual{' '}
+                              {effectivePrice > approvedPrice ? 'LEBIH TINGGI' : 'LEBIH RENDAH'} dari harga disetujui.{' '}
+                            </>
+                          )}
+                          Pop-up notifikasi otomatis akan ditampilkan kepada <strong>PM</strong> dan <strong>Finance</strong> saat login.
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Catatan Perubahan Harga / Kuantitas (Opsional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Contoh: Sisa stok di lapangan berubah / kenaikan harga vendor..."
+                          value={purchasePriceChangeNotes}
+                          onChange={(e) => setPurchasePriceChangeNotes(e.target.value)}
+                          className="w-full px-3 py-2 bg-white dark:bg-[#14171c] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                      Bukti Kuitansi / Faktur Pembelian:
+                    </label>
+                    <div className="flex items-center gap-1 text-[11px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptUploadMode('file')}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${
+                          receiptUploadMode === 'file'
+                            ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        Unggah File
+                      </button>
+                      <span className="text-zinc-400">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setReceiptUploadMode('url')}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${
+                          receiptUploadMode === 'url'
+                            ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        URL Gambar
+                      </button>
+                    </div>
+                  </div>
+
+                  {receiptUploadMode === 'file' ? (
+                    <div className="space-y-2">
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-zinc-300 dark:border-[#2a323e] hover:border-emerald-500 rounded-xl p-4 cursor-pointer bg-zinc-50 dark:bg-[#0e1115] transition-colors">
+                        <Upload className="w-6 h-6 text-zinc-400 mb-1" />
+                        <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                          {receiptFileName ? receiptFileName : 'Pilih file kuitansi (JPG, PNG, PDF)'}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 mt-0.5">
+                          Klik untuk memilih dokumen invoice dari komputer
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={handleFileUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      value={receiptUrl}
+                      onChange={(e) => setReceiptUrl(e.target.value)}
+                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  )}
+
+                  {/* Proof Preview */}
+                  {receiptUrl && (
+                    <div className="p-2 rounded-xl bg-zinc-100 dark:bg-[#181c22] border border-zinc-200 dark:border-[#262c36] flex items-center gap-3">
+                      {receiptUrl.startsWith('data:application/pdf') ? (
+                        <div className="w-12 h-12 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 shrink-0">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                      ) : (
+                        <img
+                          src={receiptUrl}
+                          alt="Preview Kuitansi"
+                          className="w-12 h-12 rounded-lg object-cover border border-zinc-300 dark:border-[#2a323e] shrink-0"
+                        />
+                      )}
+                      <div className="text-xs overflow-hidden flex-1">
+                        <div className="font-bold text-zinc-800 dark:text-zinc-200 truncate">
+                          {receiptFileName || 'Bukti Kuitansi / Faktur PO'}
+                        </div>
+                        <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Siap dikirimkan ke antrean verifikasi Admin Finance</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-700 dark:text-emerald-400">
+                  Total Biaya Aktual ({effectiveQty} {purchaseModalItem.unit}):{' '}
+                  <strong>{formatCurrency(actualPoTotal)}</strong> akan memotong kuota kas mingguan dan masuk ke queue verifikasi Finance.
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
+                  <button
+                    type="button"
+                    onClick={() => setPurchaseModalItem(null)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-zinc-800 dark:hover:text-white"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold cursor-pointer"
+                  >
+                    Konfirmasi Pembelian
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Delivery Update Modal */}
       {deliveryModalItem && (
@@ -1206,9 +1313,19 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     <DollarSign className="w-4 h-4" />
                     <span>Rincian Harga & Sourcing Pasar</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="text-zinc-500 dark:text-zinc-400">Kuantitas:</span>
-                    <strong className="text-zinc-900 dark:text-white">{selectedDetailItem.quantity} {selectedDetailItem.unit}</strong>
+                    <div className="flex items-center gap-2">
+                      <strong className="text-zinc-900 dark:text-white">{selectedDetailItem.quantity} {selectedDetailItem.unit}</strong>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAdjustPrice(selectedDetailItem)}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/30 cursor-pointer transition-colors"
+                        title="Sesuaikan kuantitas & harga satuan barang ini"
+                      >
+                        Ubah
+                      </button>
+                    </div>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500 dark:text-zinc-400">Rentang Harga Sourcing:</span>
@@ -1226,7 +1343,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                         type="button"
                         onClick={() => handleOpenAdjustPrice(selectedDetailItem)}
                         className="px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/30 cursor-pointer transition-colors"
-                        title="Sesuaikan harga satuan barang ini"
+                        title="Sesuaikan harga satuan & kuantitas barang ini"
                       >
                         Ubah
                       </button>
@@ -1313,10 +1430,10 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     handleOpenAdjustPrice(it);
                   }}
                   className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
-                  title="Sesuaikan harga satuan untuk barang ini"
+                  title="Sesuaikan harga satuan dan kuantitas untuk barang ini"
                 >
                   <Coins className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Sesuaikan Harga</span>
+                  <span>Sesuaikan Harga &amp; Kuantitas</span>
                 </button>
 
                 <button
@@ -1375,21 +1492,25 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
         </div>
       )}
 
-      {/* Adjust Price Modal (Admin Logistik authority for every item) */}
+      {/* Adjust Price & Quantity Modal (Admin Logistik authority for every item) */}
       {adjustPriceModalItem && (() => {
         const routine = routineItems.find((r) => r.id === adjustPriceModalItem.routine_item_id);
         const itemName = routine?.name || adjustPriceModalItem.custom_item_name || 'Barang Tambang';
         const catalogPrice = routine?.estimated_unit_price || 0;
         const currentPrice = adjustPriceModalItem.final_unit_price || catalogPrice || 0;
-        const qty = adjustPriceModalItem.quantity || 1;
-        const currentTotal = qty * currentPrice;
+        const currentQty = adjustPriceModalItem.quantity || 1;
+        const currentTotal = currentQty * currentPrice;
         const enteredPrice = Number(newAdjustPrice) || 0;
-        const newTotal = qty * enteredPrice;
+        const enteredQty = Number(newAdjustQuantity) || 0;
+        const qtyDiff = enteredQty - currentQty;
+        const isQtyIncreased = qtyDiff > 0.001;
+        const isQtyDecreased = qtyDiff < -0.001;
+        const newTotal = enteredQty * enteredPrice;
         const totalDiff = newTotal - currentTotal;
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in">
-            <div className="w-full max-w-lg bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5">
+            <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white dark:bg-[#14171c] rounded-2xl border border-zinc-200 dark:border-[#232830] shadow-2xl p-6 space-y-5">
               <div className="flex items-center justify-between border-b border-zinc-200 dark:border-[#232830] pb-3">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
@@ -1397,10 +1518,10 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                   </div>
                   <div>
                     <h3 className="font-bold text-base text-zinc-900 dark:text-white">
-                      Sesuaikan Harga Satuan Barang
+                      Sesuaikan Harga &amp; Kuantitas Barang
                     </h3>
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                      Otoritas Admin Logistik &bull; Update Nilai Deal / Acuan Pasar
+                      Otoritas Admin Logistik &bull; Update Nilai Deal &amp; Kuantitas Stok Aktual
                     </p>
                   </div>
                 </div>
@@ -1448,25 +1569,135 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     &ldquo;{adjustPriceModalItem.specification}&rdquo;
                   </p>
                 )}
-                <div className="pt-2 border-t border-zinc-200 dark:border-[#232830] grid grid-cols-2 gap-2 text-zinc-600 dark:text-zinc-400">
+                <div className="pt-2 border-t border-zinc-200 dark:border-[#232830] grid grid-cols-3 gap-2 text-zinc-600 dark:text-zinc-400">
                   <div>
-                    Kuantitas:{' '}
+                    <span className="text-[10px] text-zinc-400 block">Kuantitas Saat Ini:</span>
                     <strong className="text-zinc-900 dark:text-white font-mono">
-                      {qty} {adjustPriceModalItem.unit}
+                      {currentQty} {adjustPriceModalItem.unit}
                     </strong>
                   </div>
                   <div>
-                    Harga Saat Ini:{' '}
+                    <span className="text-[10px] text-zinc-400 block">Harga Saat Ini:</span>
                     <strong className="text-zinc-900 dark:text-white font-mono">
                       {formatCurrency(currentPrice)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block">Total Saat Ini:</span>
+                    <strong className="text-zinc-900 dark:text-white font-mono">
+                      {formatCurrency(currentTotal)}
                     </strong>
                   </div>
                 </div>
               </div>
 
               <form onSubmit={handleSaveAdjustPrice} className="space-y-4">
-                {/* Price Input */}
+                {/* Quantity Input */}
                 <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                      Kuantitas Baru ({adjustPriceModalItem.unit}):
+                    </label>
+                    <span
+                      className={`text-xs font-bold font-mono ${
+                        isQtyIncreased
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : isQtyDecreased
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-zinc-400'
+                      }`}
+                    >
+                      {isQtyIncreased
+                        ? `Bertambah +${qtyDiff} ${adjustPriceModalItem.unit}`
+                        : isQtyDecreased
+                        ? `Berkurang ${qtyDiff} ${adjustPriceModalItem.unit}`
+                        : `Tetap ${currentQty} ${adjustPriceModalItem.unit}`}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNewAdjustQuantity((prev) => Math.max(1, (Number(prev) || 1) - 1))
+                      }
+                      disabled={enteredQty <= 1}
+                      className="px-3.5 py-2.5 rounded-xl bg-zinc-100 dark:bg-[#1a1f26] hover:bg-zinc-200 dark:hover:bg-[#252c36] text-zinc-700 dark:text-zinc-300 font-bold disabled:opacity-40 cursor-pointer text-xs transition-colors"
+                      title="Kurangi 1"
+                    >
+                      &minus;1
+                    </button>
+                    <input
+                      type="number"
+                      min={0.01}
+                      step="any"
+                      required
+                      value={newAdjustQuantity}
+                      onChange={(e) => setNewAdjustQuantity(Number(e.target.value))}
+                      className="flex-1 px-4 py-2.5 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-300 dark:border-[#2a313d] rounded-xl text-center text-sm font-mono font-bold text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNewAdjustQuantity((prev) => (Number(prev) || 0) + 1)
+                      }
+                      className="px-3.5 py-2.5 rounded-xl bg-zinc-100 dark:bg-[#1a1f26] hover:bg-zinc-200 dark:hover:bg-[#252c36] text-zinc-700 dark:text-zinc-300 font-bold cursor-pointer text-xs transition-colors"
+                      title="Tambah 1"
+                    >
+                      +1
+                    </button>
+                  </div>
+
+                  {/* Quick Quantity Presets */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mr-1">
+                      Cepat:
+                    </span>
+                    {currentQty > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewAdjustQuantity(Math.max(1, Math.floor(currentQty / 2)))}
+                        className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-amber-500/10 hover:text-amber-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                      >
+                        50% ({Math.floor(currentQty / 2)})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustQuantity((prev) => Math.max(1, (Number(prev) || 1) - 5))}
+                      disabled={enteredQty <= 5}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-amber-500/10 hover:text-amber-500 disabled:opacity-30 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      &minus;5
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustQuantity((prev) => (Number(prev) || 0) + 5)}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-blue-500/10 hover:text-blue-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      +5
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAdjustQuantity((prev) => (Number(prev) || 0) + 10)}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-[#1a1f26] hover:bg-blue-500/10 hover:text-blue-500 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors"
+                    >
+                      +10
+                    </button>
+                    {Math.abs(enteredQty - currentQty) > 0.001 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewAdjustQuantity(currentQty)}
+                        className="px-2 py-1 rounded-lg bg-zinc-200 dark:bg-[#252c36] hover:bg-zinc-300 dark:hover:bg-[#2f3844] text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 cursor-pointer transition-colors ml-auto"
+                      >
+                        Reset Qty ({currentQty})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Price Input */}
+                <div className="space-y-2 pt-2 border-t border-zinc-200 dark:border-[#232830]">
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
                       Harga Satuan Baru (IDR):
@@ -1542,13 +1773,24 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     >
                       +10%
                     </button>
+                    {Math.abs(enteredPrice - currentPrice) > 0.001 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewAdjustPrice(currentPrice)}
+                        className="px-2 py-1 rounded-lg bg-zinc-200 dark:bg-[#252c36] hover:bg-zinc-300 dark:hover:bg-[#2f3844] text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 cursor-pointer transition-colors ml-auto"
+                      >
+                        Reset Harga
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {/* Recalculation Preview Card */}
                 <div className="p-3.5 rounded-xl bg-zinc-100 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] space-y-1.5 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-zinc-500 dark:text-zinc-400">Total Estimasi Baru ({qty} {adjustPriceModalItem.unit}):</span>
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      Total Estimasi Baru ({enteredQty} {adjustPriceModalItem.unit} &times; {formatCurrency(enteredPrice)}):
+                    </span>
                     <strong className="font-mono font-bold text-zinc-900 dark:text-white text-sm">
                       {formatCurrency(newTotal)}
                     </strong>
@@ -1598,10 +1840,12 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                 {/* Reason / Notes */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                    Catatan Penyesuaian Harga (Opsional):
+                    Catatan Penyesuaian Harga / Kuantitas (Opsional):
                   </label>
                   <div className="flex flex-wrap gap-1.5 pb-1">
                     {[
+                      'Sisa stok berubah saat mau dieksekusi',
+                      'Stok gudang masih tersedia sebagian',
                       'Negosiasi diskon supplier',
                       'Kenaikan harga pasar/distributor',
                       'Update penawaran vendor resmi',
@@ -1624,7 +1868,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     type="text"
                     value={adjustPriceNotes}
                     onChange={(e) => setAdjustPriceNotes(e.target.value)}
-                    placeholder="Tuliskan alasan penyesuaian harga..."
+                    placeholder="Tuliskan alasan penyesuaian harga atau perubahan sisa stok..."
                     className="w-full px-3 py-2 bg-zinc-50 dark:bg-[#0e1115] border border-zinc-200 dark:border-[#232830] rounded-xl text-xs text-zinc-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -1644,7 +1888,7 @@ export function LogisticsDashboard({ activeTab = 'pipeline', onTabChange }: Logi
                     className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs"
                   >
                     <Coins className="w-3.5 h-3.5" />
-                    <span>{isSavingAdjustPrice ? 'Menyimpan...' : 'Simpan Penyesuaian Harga'}</span>
+                    <span>{isSavingAdjustPrice ? 'Menyimpan...' : 'Simpan Harga & Kuantitas'}</span>
                   </button>
                 </div>
               </form>

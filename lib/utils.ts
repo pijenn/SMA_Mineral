@@ -150,6 +150,7 @@ export interface PriceChangeAlertMeta {
   oldUnitPrice: number;
   newUnitPrice: number;
   quantity: number;
+  oldQuantity?: number;
   pmAck: boolean;
   finAck: boolean;
   reason: string;
@@ -158,7 +159,8 @@ export interface PriceChangeAlertMeta {
 
 export function serializePriceAlertTag(meta: PriceChangeAlertMeta): string {
   const safeReason = encodeURIComponent(meta.reason || '');
-  return `[[PRICE_ALERT:id=${meta.alertId};old=${meta.oldUnitPrice};new=${meta.newUnitPrice};qty=${meta.quantity};pm_ack=${meta.pmAck ? 1 : 0};fin_ack=${meta.finAck ? 1 : 0};reason=${safeReason};ts=${meta.timestamp}]]`;
+  const oldQty = meta.oldQuantity !== undefined ? meta.oldQuantity : meta.quantity;
+  return `[[PRICE_ALERT:id=${meta.alertId};old=${meta.oldUnitPrice};new=${meta.newUnitPrice};old_qty=${oldQty};qty=${meta.quantity};pm_ack=${meta.pmAck ? 1 : 0};fin_ack=${meta.finAck ? 1 : 0};reason=${safeReason};ts=${meta.timestamp}]]`;
 }
 
 export function parsePriceAlertFromNotes(
@@ -181,7 +183,13 @@ export function parsePriceAlertFromNotes(
 
   const oldUnitPrice = Number(kv.old ?? 0);
   const newUnitPrice = Number(kv.new ?? 0);
-  if (isNaN(oldUnitPrice) || isNaN(newUnitPrice) || oldUnitPrice === newUnitPrice) {
+  const quantity = Number(kv.qty || 1);
+  const oldQuantity = kv.old_qty !== undefined ? Number(kv.old_qty) : quantity;
+
+  const priceSame = Math.abs(oldUnitPrice - newUnitPrice) < 0.001;
+  const qtySame = Math.abs(oldQuantity - quantity) < 0.001;
+
+  if (isNaN(oldUnitPrice) || isNaN(newUnitPrice) || (priceSame && qtySame)) {
     return null;
   }
 
@@ -197,7 +205,8 @@ export function parsePriceAlertFromNotes(
     itemId,
     oldUnitPrice,
     newUnitPrice,
-    quantity: Number(kv.qty || 1),
+    quantity,
+    oldQuantity,
     pmAck: kv.pm_ack === '1',
     finAck: kv.fin_ack === '1',
     reason: decodedReason,
